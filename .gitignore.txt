@@ -1,2 +1,2 @@
-history
-RTT_data
+/history
+RTT_data.csv
