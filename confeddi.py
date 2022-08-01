@@ -150,6 +150,8 @@ class FederatedSystem:
         tf.keras.utils.set_random_seed(self.seed)
         tf.config.experimental.enable_op_determinism()
 
+        self.communication_times()
+
         # Find which layers have trainable parameters
         trainable_layers = []
         for i, x in enumerate(self.model.layers):
@@ -178,7 +180,7 @@ class FederatedSystem:
         # For calculating loss
         model = self.generate_model(w, b)
         model.compile(optimizer = 'adam', loss = 'mse')
-        loss = model.evaluate(self.val_data['Val Data'], self.val_data['Val Labels'], verbose = 0)
+        loss = model.evaluate(self.val_data['Val Data'], self.val_data['Val Labels'], verbose = 0, use_multiprocessing = True)
         self.log.append(default_timer())
         self.mse.append(loss)
 
@@ -200,10 +202,12 @@ class FederatedSystem:
             ws.append(w)
             bs.append(b)
 
+            channel_time_t = np.sum(self.comm_times[S_t])
+
             model = self.generate_model(w, b)
             model.compile(optimizer = 'adam', loss = 'mse')
-            loss = model.evaluate(self.val_data['Val Data'], self.val_data['Val Labels'], verbose = 0)
-            self.log.append(default_timer())
+            loss = model.evaluate(self.val_data['Val Data'], self.val_data['Val Labels'], verbose = 0, use_multiprocessing = True)
+            self.log.append(default_timer() + channel_time_t)
             self.mse.append(loss)
 
         self.final_w = w
@@ -240,12 +244,13 @@ class FederatedSystem:
     # Refer to C^2UCB, solely implementing this for now
     # alpha fixed
     def UCB_scores(self, x, Vt, bt, alpha, S):
+        m = x.shape[0]
         d = x.shape[1]
         V_inv = np.linalg.inv(Vt)
         theta = np.dot(V_inv, bt)
 
         scores = []
-        for i in range(x.shape[0]):
+        for i in range(m):
             term = np.dot(theta.T, x[i])
             score = term + alpha * np.sqrt(np.dot(x[i], V_inv).dot(x[i]))
             scores.append(score)
@@ -255,7 +260,6 @@ class FederatedSystem:
 
     def ConFeddi(self, alpha, reg_coeff, epochs = 5, rounds =  20, Mt = None, deterministic = 0):
         os.environ['PYTHONHASHSEED'] = str(self.seed)
-
         tf.keras.utils.set_random_seed(self.seed)
         tf.config.experimental.enable_op_determinism()
 
@@ -287,11 +291,11 @@ class FederatedSystem:
         # get initial validation accuracy for calculating reward
         model = self.generate_model(w, b)
         model.compile(optimizer = 'adam', loss = 'mse')
-        loss = model.evaluate(self.val_data['Val Data'], self.val_data['Val Labels'], verbose = 0)
+        loss = model.evaluate(self.val_data['Val Data'], self.val_data['Val Labels'], verbose = 0, use_multiprocessing = True)
         self.log.append(default_timer())
         self.mse.append(loss)
 
-        # Start federating process, Mt is fixed for now
+        # Start federating process
         S = range(m)
         if Mt is None:
             Mt = np.random.randint(1, m + 1, rounds)
@@ -303,6 +307,10 @@ class FederatedSystem:
         b_ucb = []
         V_ucb.append(reg_coeff * np.identity(d))
         b_ucb.append(np.zeros(d))
+
+        # context elements
+        x = np.zeros((m, d))
+        r = np.zeros(m)
         for t in range(rounds):
             if ((t + 1) % 5) == 0:
                 print(f'Round {t + 1}')
@@ -310,13 +318,9 @@ class FederatedSystem:
             round_start = 1 if deterministic else default_timer()
             w_updates = [None for _ in range(m)]
             b_updates = [None for _ in range(m)]
-
-            # keeping non-selected as 0 vectors
-            x = np.zeros((m, d))
-            r = np.zeros(m)
-
+            
             # Client updates
-            for i, k in enumerate(S):
+            for k in S:
                 tf.keras.utils.set_random_seed(self.seed)
                 tf.config.experimental.enable_op_determinism()
 
@@ -325,9 +329,8 @@ class FederatedSystem:
                 end = 5 if deterministic else default_timer()
 
                 time = round(end - start, 2)
-                r[k] = model.evaluate(self.val_data['Val Data'], self.val_data['Val Labels'], verbose = 0)
+                r[k] = model.evaluate(self.val_data['Val Data'], self.val_data['Val Labels'], verbose = 0, use_multiprocessing = True)
                 x[k] = self.GetContext([model, time, r[k], vcr, history, self.comm_times[k]])
-                
 
             w, b = self.aggregate(w_updates, b_updates, n_k, S)
             ws.append(w)
@@ -339,18 +342,19 @@ class FederatedSystem:
             channel_time_t = np.sum(self.comm_times[S])
 
             # ConFeddi Portion
-            x = x / np.linalg.norm(x, axis = 0)
-            scores = self.UCB_scores(x, V_ucb[t], b_ucb[t], alpha, S)
+            x_standardized = x / np.linalg.norm(x, axis = 0)
+            scores = self.UCB_scores(x_standardized, V_ucb[t], b_ucb[t], alpha, S)
             S = np.argsort(scores)[::-1][:Mt[t]]
             xx_sum = np.zeros((d, d))
             rx_sum = np.zeros(d)
 
-            for i in range(len(S)):
-                x1 = x[i].reshape((d, 1))
+            # used to be for i in range(len(S)) and all ks were is
+            for k in S:
+                x1 = x[k].reshape((d, 1))
                 x2 = x1.T
                 xx_sum += np.dot(x1, x2)
 
-                rx = r[i] * x[i]
+                rx = r[k] * x[k]
                 rx_sum += rx
 
             V_ucb.append(V_ucb[t] + xx_sum)
@@ -358,7 +362,7 @@ class FederatedSystem:
 
             model = self.generate_model(w, b)
             model.compile(optimizer = 'adam', loss = 'mse')
-            curr_loss = model.evaluate(self.val_data['Val Data'], self.val_data['Val Labels'], verbose = 0)
+            curr_loss = model.evaluate(self.val_data['Val Data'], self.val_data['Val Labels'], verbose = 0, use_multiprocessing = True)
             self.log.append(default_timer() + channel_time_t)
             vcr = np.absolute(loss - curr_loss) / (round_end - round_start)
             loss = curr_loss
@@ -387,7 +391,7 @@ class FederatedSystem:
         for t in range(T):
             model = self.generate_model(self.w_history[t], self.b_history[t])
             model.compile(optimizer = 'adam', loss = 'mse')
-            mse_loss, mae_loss = model.evaluate(test_data, test_labels, verbose = 0, use_multiprocessing = True)
+            mse_loss = model.evaluate(test_data, test_labels, verbose = 0, use_multiprocessing = True)
             mse_losses.append(mse_loss)
 
         return mse_losses
