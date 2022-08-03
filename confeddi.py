@@ -42,11 +42,9 @@ class FederatedSystem:
         self.distances = distances
         self.comm_times = None
 
-        self.trainable_layers = None
-        self.final_w = None
-        self.final_b = None
-        self.w_history = None
-        self.b_history = None
+        self.trainable_layers = []
+        self.w_history = []
+        self.b_history = []
 
         self.ContextElements = [0, 1, 2, 3, 4]
         self.ContextDef = {
@@ -66,7 +64,22 @@ class FederatedSystem:
         # Performance
         self.val_data = None
         self.test_data = None
-        self.mse = []
+        self.val_loss = []
+
+    def clear_data(self):
+        self.clients_X = None
+        self.clients_y = None
+        self.distances = None
+        self.val_data = None
+        self.test_data = None
+
+    def clear_history(self):
+        self.log = []
+        self.comm_times = []
+        self.w_history = []
+        self.b_history = []
+        self.val_loss = []
+
 
     # Setters + Getters
     def SetModel(self, model):
@@ -95,7 +108,6 @@ class FederatedSystem:
 
     # FedAvg Methods
     def initialize_weights(self):
-        #np.random.seed(self.seed)
         w = []
         b = []
 
@@ -117,7 +129,6 @@ class FederatedSystem:
         return model
 
     def ClientUpdate(self, X, y, w, b, E):
-        #with tf.device('cpu:0'):
         model = self.generate_model(w, b)
         model.compile(optimizer = 'adam', loss = 'mse')
         history = model.fit(X, y, validation_split = 0.2, epochs = E, verbose = 0, shuffle = False, use_multiprocessing = True)
@@ -146,7 +157,6 @@ class FederatedSystem:
         return w, b
 
     def FedAvg(self, epochs = 5, frac_clients = 1, rounds = 20):
-        os.environ['PYTHONHASHSEED'] = str(self.seed)
         tf.keras.utils.set_random_seed(self.seed)
         tf.config.experimental.enable_op_determinism()
 
@@ -166,10 +176,8 @@ class FederatedSystem:
         m = max(int(frac_clients * K), 1)
         client_set = range(K)
 
-        ws = []
-        ws.append(w)
-        bs = []
-        bs.append(b)
+        self.w_history.append(w)
+        self.b_history.append(b)
 
         # Record number of samples per client
         n_k = []
@@ -182,7 +190,7 @@ class FederatedSystem:
         model.compile(optimizer = 'adam', loss = 'mse')
         loss = model.evaluate(self.val_data['Val Data'], self.val_data['Val Labels'], verbose = 0, use_multiprocessing = True)
         self.log.append(default_timer())
-        self.mse.append(loss)
+        self.val_loss.append(loss)
 
         # Start federating process
         for t in range(rounds):
@@ -194,13 +202,11 @@ class FederatedSystem:
 
             # Client updates
             for k in S_t:
-                tf.keras.utils.set_random_seed(self.seed)
-                tf.config.experimental.enable_op_determinism()
                 w_updates[k], b_updates[k], _, _ = self.ClientUpdate(self.clients_X[k], self.clients_y[k], w, b, epochs)
 
             w, b = self.aggregate(w_updates, b_updates, n_k, S_t)
-            ws.append(w)
-            bs.append(b)
+            self.w_history.append(w)
+            self.b_history.append(b)
 
             channel_time_t = np.sum(self.comm_times[S_t])
 
@@ -208,12 +214,8 @@ class FederatedSystem:
             model.compile(optimizer = 'adam', loss = 'mse')
             loss = model.evaluate(self.val_data['Val Data'], self.val_data['Val Labels'], verbose = 0, use_multiprocessing = True)
             self.log.append(default_timer() + channel_time_t)
-            self.mse.append(loss)
+            self.val_loss.append(loss)
 
-        self.final_w = w
-        self.final_b = b
-        self.w_history = ws
-        self.b_history = bs
         self.log = np.array(self.log) - self.log[0]
             
         return w, b
@@ -257,9 +259,55 @@ class FederatedSystem:
 
         return scores
 
+    def initialize(self, system):
+        # Compute communication times from distances
+        self.communication_times()
+
+        # Record trainable layers
+        for i, x in enumerate(self.model.layers):
+            if x.weights:
+                self.trainable_layers.append(i)
+
+        # Initialize w, b from standard normal
+        w, b = self.initialize_weights()
+        self.w_history.append(w)
+        self.b_history.append(b)
+
+        # Number of Clients
+        K = len(self.clients_X)
+
+        # Record number of samples per client
+        n_k = []
+        for x in self.clients_X:
+            n_k.append(x.shape[0])
+        n_k = np.array(n_k)
+
+        # Get initial validation accuracy for calculating reward
+        model = self.generate_model(w, b)
+        model.compile(optimizer = 'adam', loss = 'mse')
+        loss = model.evaluate(self.val_data['Val Data'], self.val_data['Val Labels'], verbose = 0, use_multiprocessing = True)
+        self.log.append(default_timer())
+        self.val_loss.append(loss)
+
+        if system == 'fedavg':
+            pass
+        if system == 'confeddi':
+            S = range(K)
+            vcr = 1
+            d = len(self.ContextElements)
+
+            V_ucb = []
+            b_ucb = []
+            V_ucb.append(reg_coeff * np.identity(d))
+            b_ucb.append(np.zeros(d))
+
+            # Context Elements
+            X = np.zeros((m, d))
+            r = np.zeros(m)
+
+            return {'K': K, 'n_k': n_k, 'loss': loss, 'S': S, 'vcr': vcr, 'V_ucb': V_ucb, 'b_ucb': b_ucb, 'X': X, 'r': r}
 
     def ConFeddi(self, alpha, reg_coeff, epochs = 5, rounds =  20, Mt = None, deterministic = 0):
-        os.environ['PYTHONHASHSEED'] = str(self.seed)
         tf.keras.utils.set_random_seed(self.seed)
         tf.config.experimental.enable_op_determinism()
 
@@ -277,10 +325,8 @@ class FederatedSystem:
         w, b = self.initialize_weights()
         m = len(self.clients_X)
 
-        ws = []
-        ws.append(w)
-        bs = []
-        bs.append(b)
+        self.w_history.append(w)
+        self.b_history.append(b)
         
         # Record number of samples per client
         n_k = []
@@ -293,13 +339,10 @@ class FederatedSystem:
         model.compile(optimizer = 'adam', loss = 'mse')
         loss = model.evaluate(self.val_data['Val Data'], self.val_data['Val Labels'], verbose = 0, use_multiprocessing = True)
         self.log.append(default_timer())
-        self.mse.append(loss)
+        self.val_loss.append(loss)
 
         # Start federating process
         S = range(m)
-        if Mt is None:
-            Mt = np.random.randint(1, m + 1, rounds)
-
         vcr = 1
         d = len(self.ContextElements)
 
@@ -318,12 +361,9 @@ class FederatedSystem:
             round_start = 1 if deterministic else default_timer()
             w_updates = [None for _ in range(m)]
             b_updates = [None for _ in range(m)]
-            
+
             # Client updates
             for k in S:
-                tf.keras.utils.set_random_seed(self.seed)
-                tf.config.experimental.enable_op_determinism()
-
                 start = 2 if deterministic else default_timer()
                 w_updates[k], b_updates[k], model, history = self.ClientUpdate(self.clients_X[k], self.clients_y[k], w, b, epochs)
                 end = 5 if deterministic else default_timer()
@@ -333,8 +373,8 @@ class FederatedSystem:
                 x[k] = self.GetContext([model, time, r[k], vcr, history, self.comm_times[k]])
 
             w, b = self.aggregate(w_updates, b_updates, n_k, S)
-            ws.append(w)
-            bs.append(b)
+            self.w_history.append(w)
+            self.b_history.append(b)
             
             round_end = 10 if deterministic else default_timer()
 
@@ -366,20 +406,15 @@ class FederatedSystem:
             self.log.append(default_timer() + channel_time_t)
             vcr = np.absolute(loss - curr_loss) / (round_end - round_start)
             loss = curr_loss
-            self.mse.append(loss)
+            self.val_loss.append(loss)
             
-
-        self.final_w = w
-        self.final_b = b
-        self.w_history = ws
-        self.b_history = bs
         self.log = np.array(self.log) - self.log[0]
             
         return w, b
 
     # Performance Metrics
     def val_loss(self):
-        return self.mse
+        return self.val_loss
 
     def test_loss(self):
         T = len(self.w_history)
