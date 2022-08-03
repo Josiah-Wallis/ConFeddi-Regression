@@ -61,6 +61,10 @@ class FederatedSystem:
             Dense(1, activation = 'relu')
         ])
 
+        # ConFeddi
+        self.V_ucb = []
+        self.b_ucb = []
+
         # Performance
         self.val_data = None
         self.test_data = None
@@ -76,8 +80,11 @@ class FederatedSystem:
     def clear_history(self):
         self.log = []
         self.comm_times = []
+        self.trainable_layers = []
         self.w_history = []
         self.b_history = []
+        self.V_ucb = []
+        self.b_ucb = []
         self.val_loss = []
 
 
@@ -106,7 +113,7 @@ class FederatedSystem:
         self.ContextDef[new_key] = func
         self.ContextElements += [new_key]
 
-    # FedAvg Methods
+    # FEDAVG
     def initialize_weights(self):
         w = []
         b = []
@@ -156,110 +163,7 @@ class FederatedSystem:
 
         return w, b
 
-    def FedAvg(self, epochs = 5, frac_clients = 1, rounds = 20):
-        tf.keras.utils.set_random_seed(self.seed)
-        tf.config.experimental.enable_op_determinism()
-
-        self.communication_times()
-
-        # Find which layers have trainable parameters
-        trainable_layers = []
-        for i, x in enumerate(self.model.layers):
-            if x.weights:
-                trainable_layers.append(i)
-
-        self.trainable_layers = trainable_layers
-
-        # Initialize from standard normal
-        w, b = self.initialize_weights()
-        K = len(self.clients_X)
-        m = max(int(frac_clients * K), 1)
-        client_set = range(K)
-
-        self.w_history.append(w)
-        self.b_history.append(b)
-
-        # Record number of samples per client
-        n_k = []
-        for x in self.clients_X:
-            n_k.append(x.shape[0])
-        n_k = np.array(n_k)
-
-        # For calculating loss
-        model = self.generate_model(w, b)
-        model.compile(optimizer = 'adam', loss = 'mse')
-        loss = model.evaluate(self.val_data['Val Data'], self.val_data['Val Labels'], verbose = 0, use_multiprocessing = True)
-        self.log.append(default_timer())
-        self.val_loss.append(loss)
-
-        # Start federating process
-        for t in range(rounds):
-            if ((t + 1) % 5) == 0:
-                print(f'Round {t + 1}')
-            w_updates = [None for _ in range(m)]
-            b_updates = [None for _ in range(m)]
-            S_t = sample(client_set, m)
-
-            # Client updates
-            for k in S_t:
-                w_updates[k], b_updates[k], _, _ = self.ClientUpdate(self.clients_X[k], self.clients_y[k], w, b, epochs)
-
-            w, b = self.aggregate(w_updates, b_updates, n_k, S_t)
-            self.w_history.append(w)
-            self.b_history.append(b)
-
-            channel_time_t = np.sum(self.comm_times[S_t])
-
-            model = self.generate_model(w, b)
-            model.compile(optimizer = 'adam', loss = 'mse')
-            loss = model.evaluate(self.val_data['Val Data'], self.val_data['Val Labels'], verbose = 0, use_multiprocessing = True)
-            self.log.append(default_timer() + channel_time_t)
-            self.val_loss.append(loss)
-
-        self.log = np.array(self.log) - self.log[0]
-            
-        return w, b
-
-    # ConFeddi 
-    def communication_times(self):
-        log2_vec = np.vectorize(log2)
-        fading = 10 ** -12.81 * self.distances ** -3.76
-        gain = 23
-        noise_power = -107
-        bandwidth = 15e3
-        message_size = 5e3
-        average_rate = log2_vec(1 + 10 ** (gain / 10) * fading / 10 ** (noise_power / 10))
-        self.comm_times = message_size / (bandwidth * average_rate)
-
-    # Need to create wrapper function later
-    # to encompass adding new context elements
-    def GetContext(self, data):
-        context = np.zeros(len(self.ContextElements))
-
-        for i, c in enumerate(self.ContextElements):
-            element = self.ContextDef.get(c, invalid)
-            context[i] = element(data)
-
-        return context
-    
-    
-    # Refer to C^2UCB, solely implementing this for now
-    # alpha fixed
-    def UCB_scores(self, x, Vt, bt, alpha, S):
-        m = x.shape[0]
-        d = x.shape[1]
-        V_inv = np.linalg.inv(Vt)
-        theta = np.dot(V_inv, bt)
-
-        scores = []
-        for i in range(m):
-            term = np.dot(theta.T, x[i])
-            score = term + alpha * np.sqrt(np.dot(x[i], V_inv).dot(x[i]))
-            scores.append(score)
-
-        return scores
-
-    def initialize(self, system):
+    def initialize(self, system, reg_coeff = None, frac_clients = None) -> dict:
         # Compute communication times from distances
         self.communication_times()
 
@@ -290,77 +194,126 @@ class FederatedSystem:
         self.val_loss.append(loss)
 
         if system == 'fedavg':
-            pass
+            m = max(int(frac_clients * K), 1)
+            client_set = range(K)
+
+            return {'K': K, 'm': m, 'client set': client_set, 'n_k': n_k, 'w': w, 'b': b}
+
         if system == 'confeddi':
             S = range(K)
             vcr = 1
             d = len(self.ContextElements)
 
-            V_ucb = []
-            b_ucb = []
-            V_ucb.append(reg_coeff * np.identity(d))
-            b_ucb.append(np.zeros(d))
+            self.V_ucb.append(reg_coeff * np.identity(d))
+            self.b_ucb.append(np.zeros(d))
 
             # Context Elements
-            X = np.zeros((m, d))
-            r = np.zeros(m)
+            X = np.zeros((K, d))
+            r = np.zeros(K)
 
-            return {'K': K, 'n_k': n_k, 'loss': loss, 'S': S, 'vcr': vcr, 'V_ucb': V_ucb, 'b_ucb': b_ucb, 'X': X, 'r': r}
+            return {'K': K, 'd': d, 'n_k': n_k, 'loss': loss, 'S': S, 'vcr': vcr, 'X': X, 'r': r, 'w': w, 'b': b}
+
+    def FedAvg(self, epochs = 5, frac_clients = 1, rounds = 20):
+        tf.keras.utils.set_random_seed(self.seed)
+        tf.config.experimental.enable_op_determinism()
+
+        initializer = self.initialize('fedavg', frac_clients = frac_clients)
+
+        K = initializer['K']
+        m = initializer['m']
+        client_set = initializer['client set']
+        n_k = initializer['n_k']
+        w = initializer['w']
+        b = initializer['b']
+
+        # Start federating process
+        for t in range(rounds):
+            if ((t + 1) % 5) == 0:
+                print(f'Round {t + 1}')
+            w_updates = [None for _ in range(m)]
+            b_updates = [None for _ in range(m)]
+            S = sample(client_set, m)
+
+            # Client updates
+            for k in S:
+                w_updates[k], b_updates[k], _, _ = self.ClientUpdate(self.clients_X[k], self.clients_y[k], w, b, epochs)
+
+            w, b = self.aggregate(w_updates, b_updates, n_k, S)
+            self.w_history.append(w)
+            self.b_history.append(b)
+
+            channel_time_t = np.sum(self.comm_times[S])
+
+            model = self.generate_model(w, b)
+            model.compile(optimizer = 'adam', loss = 'mse')
+            loss = model.evaluate(self.val_data['Val Data'], self.val_data['Val Labels'], verbose = 0, use_multiprocessing = True)
+            self.log.append(default_timer() + channel_time_t)
+            self.val_loss.append(loss)
+
+        self.log = np.array(self.log) - self.log[0]
+            
+        return w, b
+
+    # CONFEDDI
+    def communication_times(self):
+        log2_vec = np.vectorize(log2)
+        fading = 10 ** -12.81 * self.distances ** -3.76
+        gain = 23
+        noise_power = -107
+        bandwidth = 15e3
+        message_size = 5e3
+        average_rate = log2_vec(1 + 10 ** (gain / 10) * fading / 10 ** (noise_power / 10))
+        self.comm_times = message_size / (bandwidth * average_rate)
+
+    def GetContext(self, data: dict) -> np.ndarray:
+        context = np.zeros(len(self.ContextElements))
+
+        for i, c in enumerate(self.ContextElements):
+            element = self.ContextDef.get(c, invalid)
+            context[i] = element(data)
+
+        return context
+    
+    # C2UCB, fixed alpha
+    def UCB_scores(self, x, Vt, bt, alpha, S):
+        K = x.shape[0]
+        d = x.shape[1]
+        V_inv = np.linalg.inv(Vt)
+        theta = np.dot(V_inv, bt)
+
+        scores = []
+        for i in range(K):
+            term = np.dot(theta.T, x[i])
+            score = term + alpha * np.sqrt(np.dot(x[i], V_inv).dot(x[i]))
+            scores.append(score)
+
+        return scores
 
     def ConFeddi(self, alpha, reg_coeff, epochs = 5, rounds =  20, Mt = None, deterministic = 0):
         tf.keras.utils.set_random_seed(self.seed)
         tf.config.experimental.enable_op_determinism()
 
-        # Compute communication times
-        self.communication_times()
+        initializer = self.initialize('confeddi', reg_coeff = reg_coeff)
 
-        trainable_layers = []
-        for i, x in enumerate(self.model.layers):
-            if x.weights:
-                trainable_layers.append(i)
+        # Unpack
+        K = initializer['K']
+        d = initializer['d']
+        n_k = initializer['n_k']
+        loss = initializer['loss']
+        S = initializer['S']
+        vcr = initializer['vcr']
+        X = initializer['X']
+        r = initializer['r']
+        w = initializer['w']
+        b = initializer['b']
 
-        self.trainable_layers = trainable_layers
-
-        # Initialize from standard normal
-        w, b = self.initialize_weights()
-        m = len(self.clients_X)
-
-        self.w_history.append(w)
-        self.b_history.append(b)
-        
-        # Record number of samples per client
-        n_k = []
-        for x in self.clients_X:
-            n_k.append(x.shape[0])
-        n_k = np.array(n_k)
-
-        # get initial validation accuracy for calculating reward
-        model = self.generate_model(w, b)
-        model.compile(optimizer = 'adam', loss = 'mse')
-        loss = model.evaluate(self.val_data['Val Data'], self.val_data['Val Labels'], verbose = 0, use_multiprocessing = True)
-        self.log.append(default_timer())
-        self.val_loss.append(loss)
-
-        # Start federating process
-        S = range(m)
-        vcr = 1
-        d = len(self.ContextElements)
-
-        V_ucb = []
-        b_ucb = []
-        V_ucb.append(reg_coeff * np.identity(d))
-        b_ucb.append(np.zeros(d))
-
-        # context elements
-        x = np.zeros((m, d))
-        r = np.zeros(m)
         for t in range(rounds):
             if ((t + 1) % 5) == 0:
                 print(f'Round {t + 1}')
 
             round_start = 1 if deterministic else default_timer()
-            w_updates = [None for _ in range(m)]
-            b_updates = [None for _ in range(m)]
+            w_updates = [None for _ in range(K)]
+            b_updates = [None for _ in range(K)]
 
             # Client updates
             for k in S:
@@ -370,7 +323,7 @@ class FederatedSystem:
 
                 time = round(end - start, 2)
                 r[k] = model.evaluate(self.val_data['Val Data'], self.val_data['Val Labels'], verbose = 0, use_multiprocessing = True)
-                x[k] = self.GetContext([model, time, r[k], vcr, history, self.comm_times[k]])
+                X[k] = self.GetContext([model, time, r[k], vcr, history, self.comm_times[k]])
 
             w, b = self.aggregate(w_updates, b_updates, n_k, S)
             self.w_history.append(w)
@@ -382,23 +335,23 @@ class FederatedSystem:
             channel_time_t = np.sum(self.comm_times[S])
 
             # ConFeddi Portion
-            x_standardized = x / np.linalg.norm(x, axis = 0)
-            scores = self.UCB_scores(x_standardized, V_ucb[t], b_ucb[t], alpha, S)
+            X_standardized = X / np.linalg.norm(X, axis = 0)
+            scores = self.UCB_scores(X_standardized, self.V_ucb[t], self.b_ucb[t], alpha, S)
             S = np.argsort(scores)[::-1][:Mt[t]]
             xx_sum = np.zeros((d, d))
             rx_sum = np.zeros(d)
 
             # used to be for i in range(len(S)) and all ks were is
             for k in S:
-                x1 = x[k].reshape((d, 1))
+                x1 = X[k].reshape((d, 1))
                 x2 = x1.T
                 xx_sum += np.dot(x1, x2)
 
-                rx = r[k] * x[k]
+                rx = r[k] * X[k]
                 rx_sum += rx
 
-            V_ucb.append(V_ucb[t] + xx_sum)
-            b_ucb.append(b_ucb[t] + rx_sum)
+            self.V_ucb.append(self.V_ucb[t] + xx_sum)
+            self.b_ucb.append(self.b_ucb[t] + rx_sum)
 
             model = self.generate_model(w, b)
             model.compile(optimizer = 'adam', loss = 'mse')
@@ -412,7 +365,7 @@ class FederatedSystem:
             
         return w, b
 
-    # Performance Metrics
+    # PERFORMANCE
     def val_loss(self):
         return self.val_loss
 
