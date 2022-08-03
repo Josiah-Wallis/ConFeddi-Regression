@@ -7,7 +7,7 @@ from tensorflow.keras.layers import Dense
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
 from distribute_data import *
-
+from confeddi import FederatedSystem
 import os
 
 
