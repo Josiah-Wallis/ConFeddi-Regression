@@ -1,8 +1,6 @@
 import tensorflow as tf
 from tensorflow import keras
 import numpy as np
-import os
-import random
 
 from math import log2
 from random import sample
@@ -35,7 +33,7 @@ def invalid():
     raise Exception('Invalid')
 
 class FederatedSystem:
-    def __init__(self, clients_X, clients_y, distances = None, seed = 50):
+    def __init__(self, clients_X, clients_y, distances, seed = 50):
         self.seed = seed
         self.log = []
         self.clients_X = clients_X
