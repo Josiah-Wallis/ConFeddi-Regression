@@ -1,5 +1,4 @@
 import numpy as np
-import pandas as pd
 import os
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
@@ -54,6 +53,7 @@ class RTTSplitStrategy():
             print(f'{i}, ', end = '')
         print(self.dataset.drop(columns = self.drop_labels).columns[-1], end = '\n\n')
     
+        print(f"Clients: {len(self.final_data['Client Data'])}")
         print(f'Total Client Training Samples: {total_x} ({total_x * 100/ self.total_samples:.2f}%)')
         print(f'Total Client Training Labels: {total_y}')
         print(f'Total Validation Samples: {len(self.X_val)} ({len(self.X_val) * 100/ self.total_samples:.2f}%)')
@@ -61,6 +61,7 @@ class RTTSplitStrategy():
         print(f'Total Test Samples: {len(self.X_test)} ({len(self.X_test) * 100/ self.total_samples:.2f}%)')
         print(f'Total Test Labels: {len(self.y_test)}')
 
+    # add: display AP_index distribution of each client
     def display_client_distribution(self):
         """
         Display data distribution among clients
@@ -156,9 +157,81 @@ class RTTSplitStrategy():
             'Test': {'Data': self.X_test, 'Labels': self.y_test}
         }
         
+    # figure out algorithm to automate partitioning of office venue
     def spatial(self, args):
         """
         Distribute samples based on equal partition of office venue w.r.t. FTM resonders
         """
-        pass
+        #
+        r = args[0]
+        c = args[1]
+
+        # Initialize containers
+        self.final_data = {'Client Data': [], 'Client Labels': [], 'Client Distances': []}
+        X_val = []
+        Y_val = []
+        X_test = []
+        Y_test = []
+
+        #
+        x_min = self.X['GroundTruthPositionX[m]'].min()
+        x_max = self.X['GroundTruthPositionX[m]'].max()
+        y_min = self.X['GroundTruthPositionY[m]'].min()
+        y_max = self.X['GroundTruthPositionY[m]'].max()
+
+        #
+        x_range = x_max - x_min
+        x_block = x_range / c
+        y_range = y_max - y_min
+        y_block = y_range / r
+
+        #
+        x_cuts, y_cuts = [], []
+        for i in range(1, c):
+            x_cuts.append(x_min + i * x_block)
+        for i in range(1, r):
+            y_cuts.append(y_min + i * y_block)
+        x_cuts.insert(0, x_min - 0.5)
+        x_cuts.append(x_max + 0.5)
+        y_cuts.insert(0, y_min - 0.5)
+        y_cuts.append(y_max + 0.5)
+
+        GTPX = self.X['GroundTruthPositionX[m]']
+        GTPY = self.X['GroundTruthPositionY[m]']
+        for i, y in enumerate(y_cuts):
+            for j, x in enumerate(x_cuts):
+                jump_idx1 = 0 if j == c else 1
+                jump_idx2 = 0 if i == r else 1
+                if jump_idx1 == 0 or jump_idx2 == 0: continue
+
+                condition = (x_cuts[j] < GTPX) & (GTPX < x_cuts[j + jump_idx1]) & (y_cuts[i] < GTPY) & (GTPY < y_cuts[i + jump_idx2])
+                curr_data = self.X[condition].to_numpy()
+                curr_labs = self.y[condition].to_numpy()
+                
+                x_split, x_val, y_split, y_val = train_test_split(curr_data, curr_labs, test_size = self.test_size1, random_state = self.data_seed)
+                x_train, x_test, y_train, y_test = train_test_split(x_split, y_split, test_size = self.test_size2, random_state = self.data_seed)
+                self.final_data['Client Data'].append(x_train)
+                self.final_data['Client Labels'].append(y_train)
+                X_val.append(x_val)
+                Y_val.append(y_val)
+                X_test.append(x_test)
+                Y_test.append(y_test)
+
+        # Format for federated system
+        self.X_val = np.concatenate([x for x in X_val])
+        self.y_val = np.concatenate([y for y in Y_val])
+        self.X_test = np.concatenate([x for x in X_test])
+        self.y_test = np.concatenate([y for y in Y_test])
+
+        # Introduce distance heterogeneity
+        np.random.seed(self.data_seed)
+        self.final_data['Client Distances'] = np.random.rand(len(self.final_data['Client Data'])) / 2
+        self.final_data['Client Distances'][self.distance_clients] += self.distance_augments
+
+        # Format return
+        return {
+            'Split Data': self.final_data, 
+            'Validation': {'Val Data': self.X_val, 'Val Labels': self.y_val},
+            'Test': {'Data': self.X_test, 'Labels': self.y_test}
+        }
 
