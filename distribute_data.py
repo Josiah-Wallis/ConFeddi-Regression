@@ -1,6 +1,5 @@
 import numpy as np
 from sklearn.preprocessing import StandardScaler
-np.random.seed(50)
 
 def check_tolerance(idxs, N, tolerance):
     start = 0
@@ -67,6 +66,7 @@ def generate_data(X, y, client_num = 10, tolerance = 1000, seed = 1):
     for i in range(len(clients_X)):
         clients_X[i] = scaler.fit_transform(clients_X[i])
 
+    np.random.seed(seed)
     distances = np.random.rand(client_num) / 2
 
     return {'Client Data': clients_X, 'Client Labels': clients_y, 'Client Distances': distances}
