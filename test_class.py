@@ -152,13 +152,17 @@ class Test():
             med = np.median(ratios)
             if not trim_bias:
                 proper_mean = ratios.mean()
+                improvement = 1 - proper_mean
+                if improvement < 0: improvement = 0
+                title = f'Improvement: {improvement * 100:.2f}%'
             else:
                 proper_mean = ratios[ratios < med + trim_bias].mean()
-            improvement = 1 - proper_mean
-            if improvement < 0: improvement = 0
+                improvement = 1 - proper_mean
+                if improvement < 0: improvement = 0
+                title = f'Improvement: {improvement * 100:.2f}%, Median: {med:.2f}'
 
             plt.plot(ratios, color = 'red', label = 'Conf / Fedavg', marker = 'o')
-            plt.title(f'Improvement: {improvement * 100:.2f}%, Median: {med:.2f}')
+            plt.title(title)
             plt.ylabel('Error Ratio')
             plt.xlabel('Rounds')
             plt.hlines(1, 0, len(ratios), color = 'green', label = 'Baseline')
@@ -232,13 +236,17 @@ class Test():
             med = np.median(ratios)
             if not trim_bias:
                 proper_mean = ratios.mean()
+                improvement = 1 - proper_mean
+                if improvement < 0: improvement = 0
+                title = f'Improvement: {improvement * 100:.2f}%'
             else:
                 proper_mean = ratios[ratios < med + trim_bias].mean()
-            improvement = 1 - proper_mean
-            if improvement < 0: improvement = 0
+                improvement = 1 - proper_mean
+                if improvement < 0: improvement = 0
+                title = f'Improvement: {improvement * 100:.2f}%, Median: {med:.2f}'
 
             plt.plot(ratios, color = 'red', label = 'Conf / Fedavg', marker = 'o')
-            plt.title(f'Improvement: {improvement * 100:.2f}%, Median: {med:.2f}')
+            plt.title(title)
             plt.ylabel('Error Ratio')
             plt.xlabel('Rounds')
             plt.hlines(1, 0, len(ratios), color = 'green', label = 'Baseline')
@@ -267,15 +275,19 @@ class Test():
         med = np.median(ratios)
         if not trim_bias:
             proper_mean = ratios.mean()
+            improvement = 1 - proper_mean
+            if improvement < 0: improvement = 0
+            title = f'Improvement: {improvement * 100:.2f}%'
         else:
             proper_mean = ratios[ratios < med + trim_bias].mean()
-        improvement = 1 - proper_mean
-        if improvement < 0: improvement = 0
+            improvement = 1 - proper_mean
+            if improvement < 0: improvement = 0
+            title = f'Improvement: {improvement * 100:.2f}%, Median: {med:.2f}'
 
         plt.plot(ratios, color = 'red', label = 'Conf / Fedavg', marker = 'o')
         plt.hlines(1, 0, len(conf_mse), color = 'green', label = 'Baseline')
         plt.hlines(proper_mean, 0, len(conf_mse), color = 'blue', label = 'Trimmed Ratio', linestyle = 'dashed')
-        plt.title(f'Improvement: {improvement * 100:.2f}%, Median: {med:.2f}')
+        plt.title(title)
         plt.ylabel('Error Ratio')
         plt.xlabel('Rounds')
         plt.grid()
