@@ -13,6 +13,9 @@ from tensorflow.keras.models import clone_model
 from tensorflow.keras.layers import Dense
 
 from tensorflow.keras.optimizers import Adam
+import os
+os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
+os.environ['PYTHONHASHSEED'] = str(50)
 
 #model, time, r_ti, prev_r_t, history, comm_time
 def total_time(data):
@@ -62,6 +65,11 @@ class FederatedSystem:
             Dense(1)
         ])
 
+        # Record trainable layers
+        for i, x in enumerate(self.model.layers):
+            if x.weights:
+                self.trainable_layers.append(i)
+
         # ConFeddi
         self.V_ucb = []
         self.b_ucb = []
@@ -81,7 +89,6 @@ class FederatedSystem:
     def clear_history(self):
         self.log = []
         self.comm_times = []
-        self.trainable_layers = []
         self.w_history = []
         self.b_history = []
         self.V_ucb = []
@@ -97,9 +104,19 @@ class FederatedSystem:
             Dense(1, activation = 'relu')
         ])
 
+        # Record trainable layers
+        for i, x in enumerate(self.model.layers):
+            if x.weights:
+                self.trainable_layers.append(i)
+
     # Setters + Getters
     def SetModel(self, model):
         self.model = model
+
+        # Record trainable layers
+        for i, x in enumerate(self.model.layers):
+            if x.weights:
+                self.trainable_layers.append(i)
 
     def SetValData(self, val_data):
         self.val_data = val_data
@@ -142,7 +159,6 @@ class FederatedSystem:
 
     def generate_model(self, w, b, skip = 0):
         model = clone_model(self.model)
-
         if not skip:
             for i, x in enumerate(self.trainable_layers):
                 if type(model.layers[x]) is keras.layers.BatchNormalization:
@@ -186,11 +202,6 @@ class FederatedSystem:
     def initialize(self, system, reg_coeff = None, frac_clients = None) -> dict:
         # Compute communication times from distances
         self.communication_times()
-
-        # Record trainable layers
-        for i, x in enumerate(self.model.layers):
-            if x.weights:
-                self.trainable_layers.append(i)
 
         # Initialize w, b from standard normal
         w, b = self.initialize_weights()
@@ -331,8 +342,6 @@ class FederatedSystem:
             w_updates = [None for _ in range(K)]
             b_updates = [None for _ in range(K)]
 
-            #print(S)
-
             # Client updates
             for k in S:
                 start = 2 if deterministic else default_timer()
@@ -389,6 +398,9 @@ class FederatedSystem:
         return self.val_loss
 
     def test_loss(self):
+        tf.keras.utils.set_random_seed(self.seed)
+        tf.config.experimental.enable_op_determinism()
+
         T = len(self.w_history)
         mse_losses = []
 

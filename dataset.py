@@ -234,4 +234,3 @@ class RTTSplitStrategy():
             'Validation': {'Val Data': self.X_val, 'Val Labels': self.y_val},
             'Test': {'Data': self.X_test, 'Labels': self.y_test}
         }
-
