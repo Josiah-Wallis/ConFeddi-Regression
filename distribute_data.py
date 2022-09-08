@@ -63,8 +63,8 @@ def generate_data(X, y, client_num = 10, tolerance = 1000, seed = 1):
 
     scaler = StandardScaler()
     clients_X, clients_y = split_among_clients(X, y, split_idxs)
-    for i in range(len(clients_X)):
-        clients_X[i] = scaler.fit_transform(clients_X[i])
+    #for i in range(len(clients_X)):
+    #    clients_X[i] = scaler.fit_transform(clients_X[i])
 
     np.random.seed(seed)
     distances = np.random.rand(client_num) / 2

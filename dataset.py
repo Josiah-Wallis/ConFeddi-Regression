@@ -100,8 +100,8 @@ class RTTSplitStrategy():
         # Distribute among 10 clients (default)
         # returns client train data, client train labels, client distances
         self.final_data = generate_data(X_train, y_train, seed = self.data_seed, tolerance = self.tolerance)
-        self.X_val = self.scaler.fit_transform(self.X_val)
-        self.X_test = self.scaler.fit_transform(self.X_test)
+        #self.X_val = self.scaler.fit_transform(self.X_val)
+        #self.X_test = self.scaler.fit_transform(self.X_test)
 
         # Introduce distance heterogeneity
         self.final_data['Client Distances'][self.distance_clients] += self.distance_augments
