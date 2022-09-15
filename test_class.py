@@ -76,6 +76,9 @@ class Test():
     def SetMt(self, Mt):
         self.Mt = Mt
 
+    def SetDataSeed(self, seed):
+        self.data_args['data seed'] = seed
+
     def GetDataset(self):
         return self.StrategyHandler.dataset
 
@@ -270,262 +273,311 @@ class Test():
 
             plot += 1
 
-    # had a norm_features arg for which features to normalize over
+    def scheme1_cv(self, X, y, shuffle_idxs, cv_args):
+        tf.keras.utils.set_random_seed(self.data_args['data seed'])
+        # Unpack cv args
+        K = cv_args['K']
+        score = cv_args['score']
+        a = cv_args['a']
+        l = cv_args['l']
+        rounds = cv_args['rounds']
+        context = cv_args['context']
+
+        X = X.to_numpy()[shuffle_idxs]
+        y = y.to_numpy()[shuffle_idxs]
+        splits = np.linspace(0, len(X), K + 1).astype('int32')
+        scaler = StandardScaler()
+
+        chunks_X = []
+        chunks_y = []
+        i = 0
+        j = 1
+        while j != len(splits):
+            chunks_X.append(X[splits[i]:splits[j]])
+            chunks_y.append(y[splits[i]:splits[j]])
+            i += 1
+            j += 1
+
+        s1_fa_history = []
+        s2_fa_history = []
+        s1_conf_history = []
+        s2_conf_history = []
+        for k in range(K):
+            print(f'CV Pair {k + 1}')
+            GVGT_X = chunks_X[k]
+            GVGT_y = chunks_y[k]
+            split_idx = int(len(GVGT_X) / 2)
+
+            X_val, y_val = GVGT_X[:split_idx], GVGT_y[:split_idx]
+            X_test, y_test = GVGT_X[split_idx:], GVGT_y[split_idx:]
+
+            X_train = np.concatenate([x for idx, x in enumerate(chunks_X) if idx != k])
+            y_train = np.concatenate([x for idx, x in enumerate(chunks_y) if idx != k])
+
+            final_data = generate_data(X_train, y_train, seed = self.data_args['data seed'], tolerance = self.data_args['tolerance'], normalize = self.data_args['normalize'], client_num = self.data_args['client num'])
+            if self.data_args['normalize']:
+                X_val = scaler.fit_transform(X_val)
+                X_test = scaler.fit_transform(X_test)
+
+            # Introduce distance heterogeneity
+            final_data['Client Distances'][self.data_args['distance clients']] += self.data_args['distance augments']
+
+            # Format data and build federated system
+            val = {'Val Data': X_val, 'Val Labels': y_val}
+            test = {'Data': X_test, 'Labels': y_test}
+            self.fed = FederatedSystem(final_data['Client Data'], final_data['Client Labels'], final_data['Client Distances'])
+            self.fed.SetValData(val)
+            self.fed.SetTestData(test)
+
+            print('FedAvg')
+            w_fedavg, b_fedavg, fedavg_mse, fedavg_log = self.run_fedavg_test(rounds = rounds, frac_clients = 0.5)
+            print(f'Time: {fedavg_log[-1]}')
+            print('\nConFeddi')
+            w, b, conf_mse, conf_log = self.run_confeddi_test(a, l, rounds = rounds, context = context)
+            print(f'Time: {conf_log[-1]}', end = '\n\n')
+
+            s1_fedavg, s2_fedavg = self.average_error((w_fedavg, b_fedavg))
+            s1_fa_history.append(s1_fedavg)
+            s2_fa_history.append(s2_fedavg)
+            s1, s2 = self.average_error((w, b))
+            s1_conf_history.append(s1)
+            s2_conf_history.append(s2)
+
+            print(f'FedAvg Avg Test Error: {s1_fedavg}')
+            print(f'ConFeddi Avg Test Error: {s1}')
+            print(f'FedAvg MSE: {s2_fedavg}')
+            print(f'ConFeddi MSE: {s2}', end = '\n\n')
+
+            if k == 0:
+                best_w = w
+                best_b = b
+                best_s1 = s1
+                best_s2 = s2
+                curr_fedavg_mse = fedavg_mse
+                curr_conf_mse = conf_mse
+                curr_fedavg_log = fedavg_log
+                curr_conf_log = conf_log
+                pkg = {'Clients': final_data, 'Validation': val, 'Test': test}
+            elif (score == 1) & (s1 < best_s1):
+                best_s1 = s1
+                best_w = w
+                best_b = b
+                curr_fedavg_mse = fedavg_mse
+                curr_conf_mse = conf_mse
+                curr_fedavg_log = fedavg_log
+                curr_conf_log = conf_log
+                pkg = {'Clients': final_data, 'Validation': val, 'Test': test}
+            elif (score == 2) & (s2 < best_s2):
+                best_s2 = s2
+                best_w = w
+                best_b = b
+                curr_fedavg_mse = fedavg_mse
+                curr_conf_mse = conf_mse
+                curr_fedavg_log = fedavg_log
+                curr_conf_log = conf_log
+                pkg = {'Clients': final_data, 'Validation': val, 'Test': test}
+
+        cv_data = {
+            'parameters': (best_w, best_b),
+            'mse': (curr_fedavg_mse, curr_conf_mse),
+            'log': (curr_fedavg_log, curr_conf_log),
+            'data': pkg,
+            's1 score': (np.array(s1_fa_history).mean(), np.array(s1_conf_history).mean()),
+            's2 score': (np.array(s2_fa_history).mean(), np.array(s2_conf_history).mean())
+        }
+
+        return cv_data
+
+    def scheme3_cv(self, X, y, shuffle_idxs, cv_args, r, c):
+        tf.keras.utils.set_random_seed(self.data_args['data seed'])
+        # Unpack cv args
+        K = cv_args['K']
+        score = cv_args['score']
+        a = cv_args['a']
+        l = cv_args['l']
+        rounds = cv_args['rounds']
+        context = cv_args['context']
+
+        # Defining box corners
+        x_min = X['GroundTruthPositionX[m]'].min()
+        x_max = X['GroundTruthPositionX[m]'].max()
+        y_min = X['GroundTruthPositionY[m]'].min()
+        y_max = X['GroundTruthPositionY[m]'].max()
+
+        # Defining split boundaries
+        x_range = x_max - x_min
+        x_block = x_range / c
+        y_range = y_max - y_min
+        y_block = y_range / r
+
+        # Defining slice partitions
+        x_cuts, y_cuts = [], []
+        for i in range(1, c):
+            x_cuts.append(x_min + i * x_block)
+        for i in range(1, r):
+            y_cuts.append(y_min + i * y_block)
+        x_cuts.insert(0, x_min - 0.5)
+        x_cuts.append(x_max + 0.5)
+        y_cuts.insert(0, y_min - 0.5)
+        y_cuts.append(y_max + 0.5)
+
+        # 
+        GTPX = X['GroundTruthPositionX[m]']
+        GTPY = X['GroundTruthPositionY[m]']
+        X = X.to_numpy()[shuffle_idxs]
+        y = y.to_numpy()[shuffle_idxs]
+        s1_fa_history = []
+        s2_fa_history = []
+        s1_conf_history = []
+        s2_conf_history = []
+        for k in range(K):
+            print(f'CV Pair {k + 1}')
+            final_data = {'Client Data': [], 'Client Labels': [], 'Client Distances': []}
+            X_val = []
+            Y_val = []
+            X_test = []
+            Y_test = []
+            for i in range(len(y_cuts)):
+                for j in range(len(x_cuts)):
+                    jump_idx1 = 0 if j == c else 1
+                    jump_idx2 = 0 if i == r else 1
+                    if jump_idx1 == 0 or jump_idx2 == 0: continue
+
+                    condition = (x_cuts[j] < GTPX) & (GTPX < x_cuts[j + jump_idx1]) & (y_cuts[i] < GTPY) & (GTPY < y_cuts[i + jump_idx2])
+                    curr_data = X[condition]
+                    curr_labs = y[condition]
+                    splits = np.linspace(0, len(curr_data), K + 1).astype('int32')
+
+                    chunks_X = []
+                    chunks_y = []
+                    a = 0
+                    b = 1
+                    while b != len(splits):
+                        chunks_X.append(curr_data[splits[a]:splits[b]])
+                        chunks_y.append(curr_labs[splits[a]:splits[b]])
+                        a += 1
+                        b += 1
+
+                    # Perform chunk split
+                    GVGT_X = chunks_X[k]
+                    GVGT_y = chunks_y[k]
+                    split_idx = int(len(GVGT_X) / 2)
+
+                    x_val, y_val = GVGT_X[:split_idx], GVGT_y[:split_idx]
+                    x_test, y_test = GVGT_X[split_idx:], GVGT_y[split_idx:]
+                    x_train = np.concatenate([x for idx, x in enumerate(chunks_X) if idx != k])
+                    y_train = np.concatenate([x for idx, x in enumerate(chunks_y) if idx != k])
+
+                    # Test performance with and without fit transform
+                    #x_train = scaler.fit_transform(x_train)
+
+                    # Add to global model
+                    final_data['Client Data'].append(x_train)
+                    final_data['Client Labels'].append(y_train)
+                    X_val.append(x_val)
+                    Y_val.append(y_val)
+                    X_test.append(x_test)
+                    Y_test.append(y_test)
+
+            # Test with and without fit_transform
+            X_val = np.concatenate([x for x in X_val])
+            y_val = np.concatenate([y for y in Y_val])
+            X_test = np.concatenate([x for x in X_test])
+            y_test = np.concatenate([y for y in Y_test])
+
+            final_data['Client Distances'] = np.random.rand(len(final_data['Client Data'])) / 2
+            final_data['Client Distances'][self.data_args['distance clients']] += self.data_args['distance augments']
+
+            val = {'Val Data': X_val, 'Val Labels': y_val}
+            test = {'Data': X_test, 'Labels': y_test}
+            self.fed = FederatedSystem(final_data['Client Data'], final_data['Client Labels'], final_data['Client Distances'])
+            self.fed.SetValData(val)
+            self.fed.SetTestData(test)
+
+            print('FedAvg')
+            w_fedavg, b_fedavg, fedavg_mse, fedavg_log = self.run_fedavg_test(rounds = rounds, frac_clients = (5 / (r * c)))
+            print(f'Time: {fedavg_log[-1]}')
+            print('\nConFeddi')
+            w, b, conf_mse, conf_log = self.run_confeddi_test(a, l, rounds = rounds, context = context)
+            print(f'Time: {conf_log[-1]}', end = '\n\n')
+
+            s1_fedavg, s2_fedavg = self.average_error((w_fedavg, b_fedavg))
+            s1_fa_history.append(s1_fedavg)
+            s2_fa_history.append(s2_fedavg)
+            s1, s2 = self.average_error((w, b))
+            s1_conf_history.append(s1)
+            s2_conf_history.append(s2)
+
+            print(f'FedAvg Avg Test Error: {s1_fedavg}')
+            print(f'ConFeddi Avg Test Error: {s1}')
+            print(f'FedAvg MSE: {s2_fedavg}')
+            print(f'ConFeddi MSE: {s2}', end = '\n\n')
+
+            if k == 0:
+                best_w = w
+                best_b = b
+                best_s1 = s1
+                best_s2 = s2
+                curr_fedavg_mse = fedavg_mse
+                curr_conf_mse = conf_mse
+                curr_fedavg_log = fedavg_log
+                curr_conf_log = conf_log
+                pkg = {'Clients': final_data, 'Validation': val, 'Test': test}
+            elif (score == 1) & (s1 < best_s1):
+                best_s1 = s1
+                best_w = w
+                best_b = b
+                curr_fedavg_mse = fedavg_mse
+                curr_conf_mse = conf_mse
+                curr_fedavg_log = fedavg_log
+                curr_conf_log = conf_log
+                pkg = {'Clients': final_data, 'Validation': val, 'Test': test}
+            elif (score == 2) & (s2 < best_s2):
+                best_s2 = s2
+                best_w = w
+                best_b = b
+                curr_fedavg_mse = fedavg_mse
+                curr_conf_mse = conf_mse
+                curr_fedavg_log = fedavg_log
+                curr_conf_log = conf_log
+                pkg = {'Clients': final_data, 'Validation': val, 'Test': test}
+
+        cv_data = {
+            'parameters': (best_w, best_b),
+            'mse': (curr_fedavg_mse, curr_conf_mse),
+            'log': (curr_fedavg_log, curr_conf_log),
+            'data': pkg,
+            's1 score': (np.array(s1_fa_history).mean(), np.array(s1_conf_history).mean()),
+            's2 score': (np.array(s2_fa_history).mean(), np.array(s2_conf_history).mean())
+        }
+
+        return cv_data
+
     def cross_validation(self, K, score, a, l, rounds = 50, context = [0, 1, 2, 3, 4], args = None):
         tf.keras.utils.set_random_seed(self.data_args['data seed'])
         X = self.StrategyHandler.X.copy()
         y = self.StrategyHandler.y.copy()
 
+        #Shuffle dataset
         shuffle_idxs = np.arange(len(X))
         np.random.shuffle(shuffle_idxs)
 
-        scaler = StandardScaler()
+        # Pack arguments
+        cv_args = {
+            'K': K,
+            'score': score,
+            'a': a,
+            'l': l,
+            'rounds': rounds,
+            'context': context
+        }
         
         if self.scheme == 1:
-            X = X.to_numpy()[shuffle_idxs]
-            y = y.to_numpy()[shuffle_idxs]
-            splits = np.linspace(0, len(X), K + 1).astype('int32')
-
-            chunks_X = []
-            chunks_y = []
-            i = 0
-            j = 1
-            while j != len(splits):
-                chunks_X.append(X[splits[i]:splits[j]])
-                chunks_y.append(y[splits[i]:splits[j]])
-                i += 1
-                j += 1
-
-            s1_fa_history = []
-            s2_fa_history = []
-            s1_conf_history = []
-            s2_conf_history = []
-            for k in range(K):
-                print(f'CV Pair {k + 1}')
-                GVGT_X = chunks_X[k]
-                GVGT_y = chunks_y[k]
-                split_idx = int(len(GVGT_X) / 2)
-
-                X_val, y_val = GVGT_X[:split_idx], GVGT_y[:split_idx]
-                X_test, y_test = GVGT_X[split_idx:], GVGT_y[split_idx:]
-
-                X_train = np.concatenate([x for idx, x in enumerate(chunks_X) if idx != k])
-                y_train = np.concatenate([x for idx, x in enumerate(chunks_y) if idx != k])
-
-                final_data = generate_data(X_train, y_train, seed = self.data_args['data seed'], tolerance = self.data_args['tolerance'])
-                #X_val = scaler.fit_transform(X_val)
-                #X_test = scaler.fit_transform(X_test)
-                # comment out and test again later
-
-                final_data['Client Distances'][self.data_args['distance clients']] += self.data_args['distance augments']
-
-                val = {'Val Data': X_val, 'Val Labels': y_val}
-                test = {'Data': X_test, 'Labels': y_test}
-                self.fed = FederatedSystem(final_data['Client Data'], final_data['Client Labels'], final_data['Client Distances'])
-                self.fed.SetValData(val)
-                self.fed.SetTestData(test)
-
-                print('FedAvg')
-                w_fedavg, b_fedavg, fedavg_mse, fedavg_log = self.run_fedavg_test(rounds = rounds, frac_clients = 0.5)
-                print(f'Time: {fedavg_log[-1]}')
-                print('\nConFeddi')
-                w, b, conf_mse, conf_log = self.run_confeddi_test(a, l, rounds = rounds, context = context)
-                print(f'Time: {conf_log[-1]}', end = '\n\n')
-
-                s1_fedavg, s2_fedavg = self.average_error((w_fedavg, b_fedavg))
-                s1_fa_history.append(s1_fedavg)
-                s2_fa_history.append(s2_fedavg)
-                s1, s2 = self.average_error((w, b))
-                s1_conf_history.append(s1)
-                s2_conf_history.append(s2)
-
-                print(f'FedAvg Avg Test Error: {s1_fedavg}')
-                print(f'ConFeddi Avg Test Error: {s1}')
-                print(f'FedAvg MSE: {s2_fedavg}')
-                print(f'ConFeddi MSE: {s2}', end = '\n\n')
-
-                if k == 0:
-                    best_w = w
-                    best_b = b
-                    best_s1 = s1
-                    best_s2 = s2
-                    curr_fedavg_mse = fedavg_mse
-                    curr_conf_mse = conf_mse
-                    curr_fedavg_log = fedavg_log
-                    curr_conf_log = conf_log
-                    pkg = {'Clients': final_data, 'Validation': val, 'Test': test}
-                elif (score == 1) & (s1 < best_s1):
-                    best_s1 = s1
-                    best_w = w
-                    best_b = b
-                    curr_fedavg_mse = fedavg_mse
-                    curr_conf_mse = conf_mse
-                    curr_fedavg_log = fedavg_log
-                    curr_conf_log = conf_log
-                    pkg = {'Clients': final_data, 'Validation': val, 'Test': test}
-                elif (score == 2) & (s2 < best_s2):
-                    best_s2 = s2
-                    best_w = w
-                    best_b = b
-                    curr_fedavg_mse = fedavg_mse
-                    curr_conf_mse = conf_mse
-                    curr_fedavg_log = fedavg_log
-                    curr_conf_log = conf_log
-                    pkg = {'Clients': final_data, 'Validation': val, 'Test': test}
-
-            
+           return self.scheme1_cv(X, y, shuffle_idxs, cv_args)
+ 
         if self.scheme == 3:
-            # Defining box corners
-            x_min = X['GroundTruthPositionX[m]'].min()
-            x_max = X['GroundTruthPositionX[m]'].max()
-            y_min = X['GroundTruthPositionY[m]'].min()
-            y_max = X['GroundTruthPositionY[m]'].max()
-
-            # Setup grid
-            r, c = args[0], args[1]
-
-            # Defining split boundaries
-            x_range = x_max - x_min
-            x_block = x_range / c
-            y_range = y_max - y_min
-            y_block = y_range / r
-
-            # Defining slice partitions
-            x_cuts, y_cuts = [], []
-            for i in range(1, c):
-                x_cuts.append(x_min + i * x_block)
-            for i in range(1, r):
-                y_cuts.append(y_min + i * y_block)
-            x_cuts.insert(0, x_min - 0.5)
-            x_cuts.append(x_max + 0.5)
-            y_cuts.insert(0, y_min - 0.5)
-            y_cuts.append(y_max + 0.5)
-
-            # 
-            GTPX = X['GroundTruthPositionX[m]']
-            GTPY = X['GroundTruthPositionY[m]']
-            X = X.to_numpy()[shuffle_idxs]
-            y = y.to_numpy()[shuffle_idxs]
-            s1_fa_history = []
-            s2_fa_history = []
-            s1_conf_history = []
-            s2_conf_history = []
-            for k in range(K):
-                print(f'CV Pair {k + 1}')
-                final_data = {'Client Data': [], 'Client Labels': [], 'Client Distances': []}
-                X_val = []
-                Y_val = []
-                X_test = []
-                Y_test = []
-                for i in range(len(y_cuts)):
-                    for j in range(len(x_cuts)):
-                        jump_idx1 = 0 if j == c else 1
-                        jump_idx2 = 0 if i == r else 1
-                        if jump_idx1 == 0 or jump_idx2 == 0: continue
-
-                        condition = (x_cuts[j] < GTPX) & (GTPX < x_cuts[j + jump_idx1]) & (y_cuts[i] < GTPY) & (GTPY < y_cuts[i + jump_idx2])
-                        curr_data = X[condition]
-                        curr_labs = y[condition]
-                        splits = np.linspace(0, len(curr_data), K + 1).astype('int32')
-
-                        chunks_X = []
-                        chunks_y = []
-                        a = 0
-                        b = 1
-                        while b != len(splits):
-                            chunks_X.append(curr_data[splits[a]:splits[b]])
-                            chunks_y.append(curr_labs[splits[a]:splits[b]])
-                            a += 1
-                            b += 1
-
-                        # Perform chunk split
-                        GVGT_X = chunks_X[k]
-                        GVGT_y = chunks_y[k]
-                        split_idx = int(len(GVGT_X) / 2)
-
-                        x_val, y_val = GVGT_X[:split_idx], GVGT_y[:split_idx]
-                        x_test, y_test = GVGT_X[split_idx:], GVGT_y[split_idx:]
-                        x_train = np.concatenate([x for idx, x in enumerate(chunks_X) if idx != k])
-                        y_train = np.concatenate([x for idx, x in enumerate(chunks_y) if idx != k])
-
-                        # Test performance with and without fit transform
-                        #x_train = scaler.fit_transform(x_train)
-
-                        # Add to global model
-                        final_data['Client Data'].append(x_train)
-                        final_data['Client Labels'].append(y_train)
-                        X_val.append(x_val)
-                        Y_val.append(y_val)
-                        X_test.append(x_test)
-                        Y_test.append(y_test)
-
-                # Test with and without fit_transform
-                X_val = np.concatenate([x for x in X_val])
-                y_val = np.concatenate([y for y in Y_val])
-                X_test = np.concatenate([x for x in X_test])
-                y_test = np.concatenate([y for y in Y_test])
-
-                final_data['Client Distances'] = np.random.rand(len(final_data['Client Data'])) / 2
-                final_data['Client Distances'][self.data_args['distance clients']] += self.data_args['distance augments']
-
-                val = {'Val Data': X_val, 'Val Labels': y_val}
-                test = {'Data': X_test, 'Labels': y_test}
-                self.fed = FederatedSystem(final_data['Client Data'], final_data['Client Labels'], final_data['Client Distances'])
-                self.fed.SetValData(val)
-                self.fed.SetTestData(test)
-
-                print('FedAvg')
-                w_fedavg, b_fedavg, fedavg_mse, fedavg_log = self.run_fedavg_test(rounds = rounds, frac_clients = (5 / (r * c)))
-                print(f'Time: {fedavg_log[-1]}')
-                print('\nConFeddi')
-                w, b, conf_mse, conf_log = self.run_confeddi_test(a, l, rounds = rounds, context = context)
-                print(f'Time: {conf_log[-1]}', end = '\n\n')
-
-                s1_fedavg, s2_fedavg = self.average_error((w_fedavg, b_fedavg))
-                s1_fa_history.append(s1_fedavg)
-                s2_fa_history.append(s2_fedavg)
-                s1, s2 = self.average_error((w, b))
-                s1_conf_history.append(s1)
-                s2_conf_history.append(s2)
-
-                print(f'FedAvg Avg Test Error: {s1_fedavg}')
-                print(f'ConFeddi Avg Test Error: {s1}')
-                print(f'FedAvg MSE: {s2_fedavg}')
-                print(f'ConFeddi MSE: {s2}', end = '\n\n')
-
-                if k == 0:
-                    best_w = w
-                    best_b = b
-                    best_s1 = s1
-                    best_s2 = s2
-                    curr_fedavg_mse = fedavg_mse
-                    curr_conf_mse = conf_mse
-                    curr_fedavg_log = fedavg_log
-                    curr_conf_log = conf_log
-                    pkg = {'Clients': final_data, 'Validation': val, 'Test': test}
-                elif (score == 1) & (s1 < best_s1):
-                    best_s1 = s1
-                    best_w = w
-                    best_b = b
-                    curr_fedavg_mse = fedavg_mse
-                    curr_conf_mse = conf_mse
-                    curr_fedavg_log = fedavg_log
-                    curr_conf_log = conf_log
-                    pkg = {'Clients': final_data, 'Validation': val, 'Test': test}
-                elif (score == 2) & (s2 < best_s2):
-                    best_s2 = s2
-                    best_w = w
-                    best_b = b
-                    curr_fedavg_mse = fedavg_mse
-                    curr_conf_mse = conf_mse
-                    curr_fedavg_log = fedavg_log
-                    curr_conf_log = conf_log
-                    pkg = {'Clients': final_data, 'Validation': val, 'Test': test}
-
-        return (best_w, best_b), (curr_fedavg_mse, curr_conf_mse), (curr_fedavg_log, curr_conf_log), pkg, (np.array(s1_fa_history).mean(), np.array(s1_conf_history).mean()), (np.array(s2_fa_history).mean(), np.array(s2_conf_history).mean())
-
+            return self.scheme3_cv(X, y, shuffle_idxs, cv_args, args[0], args[1])
                 
-
     def plot_error(self, pairs, colors, labels, ylim):
         for i, p in enumerate(pairs):
             plt.plot(p[0], p[1], color = colors[i], label = labels[i], marker = 'o')
