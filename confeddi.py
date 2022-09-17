@@ -20,15 +20,11 @@ os.environ['PYTHONHASHSEED'] = str(50)
 #model, time, r_ti, prev_r_t, history, comm_time
 def total_time(data):
     return data[1] + data[-1]
-def noise_info(data):
-    history = data[4].history
-    r_ti = data[2]
-    return np.absolute(history['loss'][-1] - r_ti)
 def normalized_local_training_loss(data):
-    history = data[4].history
+    history = data[2].history
     return history['loss'][-1] / history['loss'][0]
 def normalized_local_validation_loss(data):
-    history = data[4].history
+    history = data[2].history
     return history['val_loss'][-1] / history['val_loss'][0]
 def prev_reward(data):
     return data[3]
@@ -48,13 +44,12 @@ class FederatedSystem:
         self.w_history = []
         self.b_history = []
 
-        self.ContextElements = [0, 1, 2, 3, 4]
+        self.ContextElements = [0, 1, 2, 3]
         self.ContextDef = {
             0: total_time,
-            1: noise_info,
-            2: normalized_local_training_loss,
-            3: normalized_local_validation_loss,
-            4: prev_reward
+            1: normalized_local_training_loss,
+            2: normalized_local_validation_loss,
+            3: prev_reward
         }
 
         tf.keras.utils.set_random_seed(self.seed)
@@ -75,15 +70,12 @@ class FederatedSystem:
         self.b_ucb = []
 
         # Performance
-        self.val_data = None
         self.test_data = None
-        self.val_loss = []
 
     def clear_data(self):
         self.clients_X = None
         self.clients_y = None
         self.distances = None
-        self.val_data = None
         self.test_data = None
 
     def clear_history(self):
@@ -93,7 +85,6 @@ class FederatedSystem:
         self.b_history = []
         self.V_ucb = []
         self.b_ucb = []
-        self.val_loss = []
 
     def DefaultModel(self):
         tf.keras.utils.set_random_seed(self.seed)
@@ -118,9 +109,6 @@ class FederatedSystem:
             if x.weights:
                 self.trainable_layers.append(i)
 
-    def SetValData(self, val_data):
-        self.val_data = val_data
-
     def SetTestData(self, test_data):
         self.test_data = test_data
     
@@ -144,13 +132,6 @@ class FederatedSystem:
         w = []
         b = []
 
-        '''
-        for l in self.trainable_layers:
-            w_shape = self.model.layers[l].weights[0].shape
-            b_shape = self.model.layers[l].weights[1].shape
-            w.append(np.random.standard_normal(w_shape))
-            b.append(np.random.standard_normal(b_shape))
-        '''
         for l in self.trainable_layers:
             w.append(self.model.layers[l].get_weights()[0])
             b.append(self.model.layers[l].get_weights()[1])
@@ -218,11 +199,8 @@ class FederatedSystem:
         n_k = np.array(n_k)
 
         # Get initial validation accuracy for calculating reward
-        model = self.generate_model(w, b)
-        model.compile(optimizer = 'adam', loss = 'mse')
-        loss = model.evaluate(self.val_data['Val Data'], self.val_data['Val Labels'], verbose = 0, use_multiprocessing = True)
-        self.log.append(default_timer())
-        self.val_loss.append(loss)
+        loss = 500
+        self.log.append(round(default_timer(), 2))
 
         if system == 'fedavg':
             m = max(int(frac_clients * K), 1)
@@ -232,9 +210,9 @@ class FederatedSystem:
 
         if system == 'confeddi':
             S = range(K)
-            vcr = 1
             d = len(self.ContextElements)
 
+            reward = 50
             self.V_ucb.append(reg_coeff * np.identity(d))
             self.b_ucb.append(np.zeros(d))
 
@@ -242,7 +220,7 @@ class FederatedSystem:
             X = np.zeros((K, d))
             r = np.zeros(K)
 
-            return {'K': K, 'd': d, 'n_k': n_k, 'loss': loss, 'S': S, 'vcr': vcr, 'X': X, 'r': r, 'w': w, 'b': b}
+            return {'K': K, 'd': d, 'n_k': n_k, 'loss': loss, 'S': S, 'X': X, 'r': r, 'w': w, 'b': b, 'reward': reward}
 
     def FedAvg(self, lr = 0.001, epochs = 5, frac_clients = 1, rounds = 20):
         tf.keras.utils.set_random_seed(self.seed)
@@ -275,7 +253,9 @@ class FederatedSystem:
 
             channel_time_t = np.sum(self.comm_times[S])
 
-            self.log.append(default_timer() + channel_time_t)
+            # didn't round before
+            marker = round(default_timer() + channel_time_t, 2)
+            self.log.append(marker)
 
         self.log = np.array(self.log) - self.log[0]
             
@@ -302,9 +282,8 @@ class FederatedSystem:
         return context
     
     # C2UCB, fixed alpha
-    def UCB_scores(self, x, Vt, bt, alpha, S):
+    def UCB_scores(self, x, Vt, bt, alpha):
         K = x.shape[0]
-        d = x.shape[1]
         V_inv = np.linalg.inv(Vt)
         theta = np.dot(V_inv, bt)
 
@@ -328,7 +307,7 @@ class FederatedSystem:
         n_k = initializer['n_k']
         loss = initializer['loss']
         S = initializer['S']
-        vcr = initializer['vcr']
+        reward = initializer['reward']
         X = initializer['X']
         r = initializer['r']
         w = initializer['w']
@@ -341,6 +320,7 @@ class FederatedSystem:
             round_start = 1 if deterministic else default_timer()
             w_updates = [None for _ in range(K)]
             b_updates = [None for _ in range(K)]
+            reward_vec = []
 
             # Client updates
             for k in S:
@@ -348,9 +328,11 @@ class FederatedSystem:
                 w_updates[k], b_updates[k], model, history = self.ClientUpdate(self.clients_X[k], self.clients_y[k], lr, w, b, epochs)
                 end = 5 if deterministic else default_timer()
 
-                time = round(end - start, 2)
-                r[k] = model.evaluate(self.val_data['Val Data'], self.val_data['Val Labels'], verbose = 0, use_multiprocessing = True)
-                X[k] = self.GetContext([model, time, r[k], vcr, history, self.comm_times[k]])
+                reward_vec.append(history.history['val_loss'][-1])
+
+                # before: round(end - start, 2)
+                time = end - start
+                X[k] = self.GetContext([model, time, history, reward, self.comm_times[k]])
 
             w, b = self.aggregate(w_updates, b_updates, n_k, S)
             self.w_history.append(w)
@@ -363,12 +345,12 @@ class FederatedSystem:
 
             # ConFeddi Portion
             X_standardized = X / np.linalg.norm(X, axis = 0)
-            scores = self.UCB_scores(X_standardized, self.V_ucb[t], self.b_ucb[t], alpha, S)
+            scores = self.UCB_scores(X_standardized, self.V_ucb[t], self.b_ucb[t], alpha)
             S = np.argsort(scores)[::-1][:Mt[t]]
             xx_sum = np.zeros((d, d))
             rx_sum = np.zeros(d)
 
-            # used to be for i in range(len(S)) and all ks were is
+            # make sure computations are correct
             for k in S:
                 x1 = X[k].reshape((d, 1))
                 x2 = x1.T
@@ -380,23 +362,21 @@ class FederatedSystem:
             self.V_ucb.append(self.V_ucb[t] + xx_sum)
             self.b_ucb.append(self.b_ucb[t] + rx_sum)
 
-            model = self.generate_model(w, b)
-            model.compile(optimizer = 'adam', loss = 'mse')
-            curr_loss = model.evaluate(self.val_data['Val Data'], self.val_data['Val Labels'], verbose = 0, use_multiprocessing = True)
-            self.log.append(default_timer() + channel_time_t)
-            vcr = np.absolute(loss - curr_loss) / (round_end - round_start)
+            # marker wasn't here before
+            marker = round(default_timer() + channel_time_t, 2)
+            self.log.append(marker)
+
+            # Compute reward
+            curr_loss = np.array(reward_vec).mean()
+            reward = np.absolute(loss - curr_loss) / (round_end - round_start) #didn't round before
             loss = curr_loss
-            self.val_loss.append(loss)
             
+        # 2nd term wasn't rounded before
         self.log = np.array(self.log) - self.log[0]
             
         return w, b
 
     # PERFORMANCE
-    def val_loss(self):
-        # fix for fedavg later
-        return self.val_loss
-
     def test_loss(self):
         tf.keras.utils.set_random_seed(self.seed)
         tf.config.experimental.enable_op_determinism()

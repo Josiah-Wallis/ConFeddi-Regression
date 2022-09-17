@@ -40,7 +40,7 @@ class RTTSplitStrategy():
         Displays metadata regarding data distribution
         - Total Samples
         - Number of Clients
-        - Training, Validation, Test split
+        - Training and Test split
         - Percent of total data per client
         """
         # Backwards computing total data
@@ -51,7 +51,7 @@ class RTTSplitStrategy():
             total_y += len(b)
 
         print(f'Number of samples: {self.total_samples}')
-        print(f'Features per sample: {self.X_val.shape[1]}', end = '\n\n')
+        print(f'Features per sample: {self.X_test.shape[1]}', end = '\n\n')
 
         print(f'Columns:')
         for i in self.dataset.drop(columns = self.drop_labels).columns[:-1]:
@@ -61,8 +61,6 @@ class RTTSplitStrategy():
         print(f"Clients: {len(self.final_data['Client Data'])}")
         print(f'Total Client Training Samples: {total_x} ({total_x * 100/ self.total_samples:.2f}%)')
         print(f'Total Client Training Labels: {total_y}')
-        print(f'Total Validation Samples: {len(self.X_val)} ({len(self.X_val) * 100/ self.total_samples:.2f}%)')
-        print(f'Total Validation Labels: {len(self.y_val)}')
         print(f'Total Test Samples: {len(self.X_test)} ({len(self.X_test) * 100/ self.total_samples:.2f}%)')
         print(f'Total Test Labels: {len(self.y_test)}')
 
@@ -95,13 +93,12 @@ class RTTSplitStrategy():
         y = self.y.to_numpy()
 
         # Split into model training/val set + global validation set not used for selection criteria
-        X_split, self.X_val, y_split, self.y_val = train_test_split(X, y, test_size = self.test_size1, random_state = self.data_seed)
-        X_train, self.X_test, y_train, self.y_test = train_test_split(X_split, y_split, test_size = self.test_size2, random_state = self.data_seed)
+        X_train, self.X_test, y_train, self.y_test = train_test_split(X, y, test_size = self.test_size1, random_state = self.data_seed)
+
 
         # Distribute among 10 clients (default)
         self.final_data = generate_data(X_train, y_train, seed = self.data_seed, tolerance = self.tolerance, normalize = self.normalize, client_num = self.client_num)
         if self.normalize:
-            self.X_val = self.scaler.fit_transform(self.X_val)
             self.X_test = self.scaler.fit_transform(self.X_test)
 
         # Introduce distance heterogeneity
@@ -110,7 +107,6 @@ class RTTSplitStrategy():
         # Format return
         return {
             'Split Data': self.final_data, 
-            'Validation': {'Val Data': self.X_val, 'Val Labels': self.y_val},
             'Test': {'Data': self.X_test, 'Labels': self.y_test}
         }
 
@@ -120,8 +116,6 @@ class RTTSplitStrategy():
         """       
         # Initialize containers
         self.final_data = {'Client Data': [], 'Client Labels': [], 'Client Distances': []}
-        X_val = []
-        Y_val = []
         X_test = []
         Y_test = []
 
@@ -131,18 +125,13 @@ class RTTSplitStrategy():
             curr_data = self.X[condition].to_numpy()
             curr_labs = self.y[condition].to_numpy()
             
-            x_split, x_val, y_split, y_val = train_test_split(curr_data, curr_labs, test_size = self.test_size1, random_state = self.data_seed)
-            x_train, x_test, y_train, y_test = train_test_split(x_split, y_split, test_size = self.test_size2, random_state = self.data_seed)
+            x_train, x_test, y_train, y_test = train_test_split(curr_data, curr_labs, test_size = self.test_size1, random_state = self.data_seed)
             self.final_data['Client Data'].append(x_train)
             self.final_data['Client Labels'].append(y_train)
-            X_val.append(x_val)
-            Y_val.append(y_val)
             X_test.append(x_test)
             Y_test.append(y_test)
 
         # Format for federated system
-        self.X_val = np.concatenate([x for x in X_val])
-        self.y_val = np.concatenate([y for y in Y_val])
         self.X_test = np.concatenate([x for x in X_test])
         self.y_test = np.concatenate([y for y in Y_test])
 
@@ -154,7 +143,6 @@ class RTTSplitStrategy():
         # Format return
         return {
             'Split Data': self.final_data, 
-            'Validation': {'Val Data': self.X_val, 'Val Labels': self.y_val},
             'Test': {'Data': self.X_test, 'Labels': self.y_test}
         }
         
@@ -168,8 +156,6 @@ class RTTSplitStrategy():
 
         # Initialize containers
         self.final_data = {'Client Data': [], 'Client Labels': [], 'Client Distances': []}
-        X_val = []
-        Y_val = []
         X_test = []
         Y_test = []
 
@@ -212,24 +198,18 @@ class RTTSplitStrategy():
                 curr_labs = self.y[condition].to_numpy()
                 
                 # Split data into train/val/test split
-                x_split, x_val, y_split, y_val = train_test_split(curr_data, curr_labs, test_size = self.test_size1, random_state = self.data_seed)
-                x_train, x_test, y_train, y_test = train_test_split(x_split, y_split, test_size = self.test_size2, random_state = self.data_seed)
+                x_train, x_test, y_train, y_test = train_test_split(curr_data, curr_labs, test_size = self.test_size1, random_state = self.data_seed)
 
                 if self.normalize:
                     x_train = self.scaler.fit_transform(x_train)
-                    x_val = self.scaler.fit_transform(x_val)
                     x_test = self.scaler.fit_transform(x_test)
 
                 self.final_data['Client Data'].append(x_train)
                 self.final_data['Client Labels'].append(y_train)
-                X_val.append(x_val)
-                Y_val.append(y_val)
                 X_test.append(x_test)
                 Y_test.append(y_test)
 
         # Format for federated system
-        self.X_val = np.concatenate([x for x in X_val])
-        self.y_val = np.concatenate([y for y in Y_val])
         self.X_test = np.concatenate([x for x in X_test])
         self.y_test = np.concatenate([y for y in Y_test])
 
@@ -241,6 +221,5 @@ class RTTSplitStrategy():
         # Format return
         return {
             'Split Data': self.final_data, 
-            'Validation': {'Val Data': self.X_val, 'Val Labels': self.y_val},
             'Test': {'Data': self.X_test, 'Labels': self.y_test}
         }
