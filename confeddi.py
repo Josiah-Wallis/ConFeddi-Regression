@@ -1,42 +1,55 @@
+import os
 import tensorflow as tf
-from tensorflow import keras
 import numpy as np
-
 from math import log2
 from random import sample
 from timeit import default_timer
-from inspect import signature
-from sklearn.model_selection import train_test_split
-from tensorflow.random import set_seed
-from tensorflow.keras import Sequential
-from tensorflow.keras.models import clone_model
-from tensorflow.keras.layers import Dense
-
-from tensorflow.keras.optimizers import Adam
-import os
+from typing import Union, Callable
+from tensorflow import keras
+from keras import Sequential
+from keras.models import clone_model
+from keras.layers import Dense
+from keras.optimizers import Adam
 os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 os.environ['PYTHONHASHSEED'] = str(50)
 
-#model, time, r_ti, prev_r_t, history, comm_time
+# Context Functions
 def total_time(data):
+    # returns client update time + communication delay
+
     return data[1] + data[-1]
-def noise_info(data):
-    history = data[4].history
-    r_ti = data[2]
-    return np.absolute(history['loss'][-1] - r_ti)
+
 def normalized_local_training_loss(data):
-    history = data[4].history
+    # returns final local training loss divided by initial local training loss
+
+    history = data[2].history
     return history['loss'][-1] / history['loss'][0]
+
 def normalized_local_validation_loss(data):
-    history = data[4].history
+    # returns final local validation loss divided by initial local validation loss
+
+    history = data[2].history
     return history['val_loss'][-1] / history['val_loss'][0]
+
 def prev_reward(data):
+    # returns previous round reward
+
     return data[3]
+
 def invalid():
+    # produces Exception if GetContext accesses invalid context function
+
     raise Exception('Invalid')
 
+# FL Class
 class FederatedSystem:
-    def __init__(self, clients_X, clients_y, distances, seed = 50):
+    def __init__(self, clients_X: list[np.array], clients_y: list[np.array], distances: np.array, seed: int = 50) -> None:
+        """
+        Unpack client data, labels, and distances.
+        Initialize containers for storing run history.
+        """
+
+        # Unpack data used for training and timing
         self.seed = seed
         self.log = []
         self.clients_X = clients_X
@@ -44,19 +57,7 @@ class FederatedSystem:
         self.distances = distances
         self.comm_times = None
 
-        self.trainable_layers = []
-        self.w_history = []
-        self.b_history = []
-
-        self.ContextElements = [0, 1, 2, 3, 4]
-        self.ContextDef = {
-            0: total_time,
-            1: noise_info,
-            2: normalized_local_training_loss,
-            3: normalized_local_validation_loss,
-            4: prev_reward
-        }
-
+        # Define default local model
         tf.keras.utils.set_random_seed(self.seed)
         tf.config.experimental.enable_op_determinism()
         self.model = Sequential([
@@ -65,37 +66,49 @@ class FederatedSystem:
             Dense(1)
         ])
 
+        # Initialize FL containers
+        self.trainable_layers = []
+        self.w_history = []
+        self.b_history = []
+
         # Record trainable layers
         for i, x in enumerate(self.model.layers):
             if x.weights:
                 self.trainable_layers.append(i)
 
-        # ConFeddi
+        # ConFeddi context definition
+        self.ContextElements = [0, 1, 2, 3]
+        self.ContextDef = {
+            0: total_time,
+            1: normalized_local_training_loss,
+            2: normalized_local_validation_loss,
+            3: prev_reward
+        }
+
+        # C2UCB Containers
         self.V_ucb = []
         self.b_ucb = []
 
         # Performance
-        self.val_data = None
-        self.test_data = None
-        self.val_loss = []
-
-    def clear_data(self):
-        self.clients_X = None
-        self.clients_y = None
-        self.distances = None
-        self.val_data = None
         self.test_data = None
 
-    def clear_history(self):
+    def clear_history(self) -> None:
+        """
+        Refreshes FL system to be trained again.
+        """
+
         self.log = []
         self.comm_times = []
         self.w_history = []
         self.b_history = []
         self.V_ucb = []
         self.b_ucb = []
-        self.val_loss = []
 
-    def DefaultModel(self):
+    def DefaultModel(self) -> None:
+        """
+        If local models have been altered, reverts back to base models. 
+        """
+
         tf.keras.utils.set_random_seed(self.seed)
         tf.config.experimental.enable_op_determinism()
         self.model = Sequential([
@@ -110,7 +123,11 @@ class FederatedSystem:
                 self.trainable_layers.append(i)
 
     # Setters + Getters
-    def SetModel(self, model):
+    def SetModel(self, model: tf.keras.Model) -> None:
+        """
+        Sets FL local models to model.
+        """
+
         self.model = model
 
         # Record trainable layers
@@ -118,46 +135,65 @@ class FederatedSystem:
             if x.weights:
                 self.trainable_layers.append(i)
 
-    def SetValData(self, val_data):
-        self.val_data = val_data
+    def SetTestData(self, test_data: np.array) -> None:
+        """
+        FL system evaluates on test_data at test time.
+        Should be set prior to using self.test_loss.
+        """
 
-    def SetTestData(self, test_data):
         self.test_data = test_data
     
-    def SetSeed(self, seed):
+    def SetSeed(self, seed: int) -> None:
+        """
+        Sets seed for numpy, random, and Python.
+        """
+
         self.seed = seed
 
-    def SetContextElements(self, options):
+    def SetContextElements(self, options: list[int]) -> None:
+        """
+        Sets which context elements ConFeddi will evaluate on.
+        """
+
         self.ContextElements = options
 
-    def GetLog(self):
+    def GetLog(self) -> list[float]:
+        """
+        Returns timing history of round ends in seconds.
+        """
+
         return self.log
 
-    def AddContextElements(self, func):
+    def AddContextElements(self, func: Callable) -> None:
+        """
+        Adds a new context criteria to be evaluated.
+        Requires some tweaking with default context arguments.
+        """
+
         keys = list(self.ContextDef.keys()).sort()
         new_key = keys[-1] + 1
         self.ContextDef[new_key] = func
         self.ContextElements += [new_key]
 
-    # FEDAVG
+    # FedAvg
     def initialize_weights(self):
+    # Returns initial model parameters of self.model
         w = []
         b = []
 
-        '''
-        for l in self.trainable_layers:
-            w_shape = self.model.layers[l].weights[0].shape
-            b_shape = self.model.layers[l].weights[1].shape
-            w.append(np.random.standard_normal(w_shape))
-            b.append(np.random.standard_normal(b_shape))
-        '''
         for l in self.trainable_layers:
             w.append(self.model.layers[l].get_weights()[0])
             b.append(self.model.layers[l].get_weights()[1])
 
         return w, b
 
-    def generate_model(self, w, b, skip = 0):
+    def generate_model(self, w: list[np.array], b: list[np.array], skip: int = 0) -> tf.keras.Model:
+        """
+        Given model parameters and bias of same shape as self.model,
+        initializes copy of self.model with said parameters.
+        Must be tweaked for custom or more complex NN layers.
+        """
+        
         model = clone_model(self.model)
         if not skip:
             for i, x in enumerate(self.trainable_layers):
@@ -172,6 +208,7 @@ class FederatedSystem:
         return model
 
     def ClientUpdate(self, X, y, lr, w, b, E):
+        # Trains a local model
         model = self.generate_model(w, b)
         model.compile(optimizer = Adam(learning_rate = lr), loss = 'mse')
         history = model.fit(X, y, validation_split = 0.2, epochs = E, verbose = 0, shuffle = False, use_multiprocessing = True)
@@ -185,6 +222,7 @@ class FederatedSystem:
         return w, b, model, history
 
     def aggregate(self, w_updates, b_updates, n_k, S_t):
+        # FedAvg model aggregation step
         n = np.sum(n_k[S_t])
         num_trainable_layers = len(self.trainable_layers)
         w = [0 for _ in range(num_trainable_layers)]
@@ -199,7 +237,9 @@ class FederatedSystem:
 
         return w, b
 
-    def initialize(self, system, reg_coeff = None, frac_clients = None) -> dict:
+    def initialize(self, system, reg_coeff = None, frac_clients = None):
+        # Initializes FedAvg or ConFeddi model with appropriate parameters
+
         # Compute communication times from distances
         self.communication_times()
 
@@ -218,11 +258,8 @@ class FederatedSystem:
         n_k = np.array(n_k)
 
         # Get initial validation accuracy for calculating reward
-        model = self.generate_model(w, b)
-        model.compile(optimizer = 'adam', loss = 'mse')
-        loss = model.evaluate(self.val_data['Val Data'], self.val_data['Val Labels'], verbose = 0, use_multiprocessing = True)
-        self.log.append(default_timer())
-        self.val_loss.append(loss)
+        loss = 500
+        self.log.append(round(default_timer(), 2))
 
         if system == 'fedavg':
             m = max(int(frac_clients * K), 1)
@@ -232,9 +269,9 @@ class FederatedSystem:
 
         if system == 'confeddi':
             S = range(K)
-            vcr = 1
             d = len(self.ContextElements)
 
+            reward = 50
             self.V_ucb.append(reg_coeff * np.identity(d))
             self.b_ucb.append(np.zeros(d))
 
@@ -242,9 +279,14 @@ class FederatedSystem:
             X = np.zeros((K, d))
             r = np.zeros(K)
 
-            return {'K': K, 'd': d, 'n_k': n_k, 'loss': loss, 'S': S, 'vcr': vcr, 'X': X, 'r': r, 'w': w, 'b': b}
+            return {'K': K, 'd': d, 'n_k': n_k, 'loss': loss, 'S': S, 'X': X, 'r': r, 'w': w, 'b': b, 'reward': reward}
 
-    def FedAvg(self, lr = 0.001, epochs = 5, frac_clients = 1, rounds = 20):
+    def FedAvg(self, lr: float = 0.001, epochs: int = 5, frac_clients: float = 1, rounds: int = 20) -> tuple[list[np.array], list[np.array]]:
+        """
+        Performs Federated Averaging on the given client data.
+        Local client models are aggregated rounds times.
+        """
+
         tf.keras.utils.set_random_seed(self.seed)
         tf.config.experimental.enable_op_determinism()
 
@@ -275,14 +317,16 @@ class FederatedSystem:
 
             channel_time_t = np.sum(self.comm_times[S])
 
-            self.log.append(default_timer() + channel_time_t)
+            marker = round(default_timer() + channel_time_t, 2)
+            self.log.append(marker)
 
         self.log = np.array(self.log) - self.log[0]
             
         return w, b
 
-    # CONFEDDI
+    # ConFeddi
     def communication_times(self):
+        # Simulates communication delay between client and server
         log2_vec = np.vectorize(log2)
         fading = 10 ** -12.81 * self.distances ** -3.76
         gain = 23
@@ -292,7 +336,8 @@ class FederatedSystem:
         average_rate = log2_vec(1 + 10 ** (gain / 10) * fading / 10 ** (noise_power / 10))
         self.comm_times = message_size / (bandwidth * average_rate)
 
-    def GetContext(self, data: dict) -> np.ndarray:
+    def GetContext(self, data):
+        # Generates context vector for given client
         context = np.zeros(len(self.ContextElements))
 
         for i, c in enumerate(self.ContextElements):
@@ -301,10 +346,9 @@ class FederatedSystem:
 
         return context
     
-    # C2UCB, fixed alpha
-    def UCB_scores(self, x, Vt, bt, alpha, S):
+    def UCB_scores(self, x, Vt, bt, alpha):
+        # C2UCB with fixed alpha. Scores clients based on context elements
         K = x.shape[0]
-        d = x.shape[1]
         V_inv = np.linalg.inv(Vt)
         theta = np.dot(V_inv, bt)
 
@@ -316,7 +360,13 @@ class FederatedSystem:
 
         return scores
 
-    def ConFeddi(self, alpha, reg_coeff, lr = 0.001, epochs = 5, rounds =  20, Mt = None, deterministic = 0):
+    def ConFeddi(self, alpha: float, reg_coeff: float, lr: float = 0.001, epochs: int = 5, rounds: int =  20, Mt: np.array = None, deterministic: Union[int, bool] = 0) -> tuple[list[np.array], list[np.array]]:
+        """
+        Performs ConFeddi for the regressive task.
+        Aggregates local model parameters rounds times.
+        Selects clients based on context criteria.
+        """
+
         tf.keras.utils.set_random_seed(self.seed)
         tf.config.experimental.enable_op_determinism()
 
@@ -328,7 +378,7 @@ class FederatedSystem:
         n_k = initializer['n_k']
         loss = initializer['loss']
         S = initializer['S']
-        vcr = initializer['vcr']
+        reward = initializer['reward']
         X = initializer['X']
         r = initializer['r']
         w = initializer['w']
@@ -341,6 +391,7 @@ class FederatedSystem:
             round_start = 1 if deterministic else default_timer()
             w_updates = [None for _ in range(K)]
             b_updates = [None for _ in range(K)]
+            reward_vec = []
 
             # Client updates
             for k in S:
@@ -348,9 +399,11 @@ class FederatedSystem:
                 w_updates[k], b_updates[k], model, history = self.ClientUpdate(self.clients_X[k], self.clients_y[k], lr, w, b, epochs)
                 end = 5 if deterministic else default_timer()
 
-                time = round(end - start, 2)
-                r[k] = model.evaluate(self.val_data['Val Data'], self.val_data['Val Labels'], verbose = 0, use_multiprocessing = True)
-                X[k] = self.GetContext([model, time, r[k], vcr, history, self.comm_times[k]])
+                reward_vec.append(history.history['val_loss'][-1])
+
+                # before: round(end - start, 2)
+                time = end - start
+                X[k] = self.GetContext([model, time, history, reward, self.comm_times[k]])
 
             w, b = self.aggregate(w_updates, b_updates, n_k, S)
             self.w_history.append(w)
@@ -363,12 +416,12 @@ class FederatedSystem:
 
             # ConFeddi Portion
             X_standardized = X / np.linalg.norm(X, axis = 0)
-            scores = self.UCB_scores(X_standardized, self.V_ucb[t], self.b_ucb[t], alpha, S)
+            scores = self.UCB_scores(X_standardized, self.V_ucb[t], self.b_ucb[t], alpha)
             S = np.argsort(scores)[::-1][:Mt[t]]
             xx_sum = np.zeros((d, d))
             rx_sum = np.zeros(d)
 
-            # used to be for i in range(len(S)) and all ks were is
+            # make sure computations are correct
             for k in S:
                 x1 = X[k].reshape((d, 1))
                 x2 = x1.T
@@ -380,24 +433,26 @@ class FederatedSystem:
             self.V_ucb.append(self.V_ucb[t] + xx_sum)
             self.b_ucb.append(self.b_ucb[t] + rx_sum)
 
-            model = self.generate_model(w, b)
-            model.compile(optimizer = 'adam', loss = 'mse')
-            curr_loss = model.evaluate(self.val_data['Val Data'], self.val_data['Val Labels'], verbose = 0, use_multiprocessing = True)
-            self.log.append(default_timer() + channel_time_t)
-            vcr = np.absolute(loss - curr_loss) / (round_end - round_start)
+            # marker wasn't here before
+            marker = round(default_timer() + channel_time_t, 2)
+            self.log.append(marker)
+
+            # Compute reward
+            curr_loss = np.array(reward_vec).mean()
+            reward = np.absolute(loss - curr_loss) / (round_end - round_start) #didn't round before
             loss = curr_loss
-            self.val_loss.append(loss)
             
+        # 2nd term wasn't rounded before
         self.log = np.array(self.log) - self.log[0]
             
         return w, b
 
-    # PERFORMANCE
-    def val_loss(self):
-        # fix for fedavg later
-        return self.val_loss
+    # Performance
+    def test_loss(self) -> list[float]:
+        """
+        For each global model generated during aggregation, evaluates on self.test_data.
+        """
 
-    def test_loss(self):
         tf.keras.utils.set_random_seed(self.seed)
         tf.config.experimental.enable_op_determinism()
 
