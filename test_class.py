@@ -228,6 +228,11 @@ class Test():
             plot += 1
 
     def confeddi_as(self, context_elements: list[list[int]], a: float, l: float, lr: float = 0.001, epochs: int = 5, rounds: int =  20, deterministic: Union[int, bool] = 0) -> dict:
+        """
+        Runs a ConFeddi ablation study by running ConFeddi with subsets of the full context vector.
+        Returns the model parameters for each model.
+        """
+
         self.conf_as_history = dict()
         conf_as_wb_history = dict()
         count = 1
