@@ -2,9 +2,8 @@ import numpy as np
 from sklearn.preprocessing import StandardScaler
 
 def check_tolerance(idxs, N, tolerance):
-    """
-    Checks if index list idxs satisfies the tolerance.
-    """
+    #Checks if index list idxs satisfies the tolerance.
+
     start = 0
     for idx in idxs:
         if (idx - start) <= tolerance:
@@ -17,11 +16,8 @@ def check_tolerance(idxs, N, tolerance):
         return True
 
 def validate_distribution(split_idxs, N, tolerance, client_num, seed):
-    """
-    Validates that the indices provided by split_idxs satisfy
-    the tolerance and number of clients. Produces a new distribution
-    if tolerance isn't satisfied.
-    """
+    # Wrapper for check_tolerance
+
     count = 0
 
     while True:
@@ -38,10 +34,9 @@ def validate_distribution(split_idxs, N, tolerance, client_num, seed):
             split_idxs = np.sort(split_idxs).astype('int32')
 
 def split_among_clients(X, y, split_idxs):
-    """
-    Distributes X and y amongst clients using the indices
-    from split_idxs.
-    """
+    #Distributes X and y amongst clients using the indices from split_idxs.
+
+
     clients_X = []
     clients_y = []
     start = 0
@@ -64,10 +59,8 @@ def split_among_clients(X, y, split_idxs):
 
 
 def generate_data(X, y, client_num = 10, tolerance = 1000, seed = 1, normalize = False):
-    """
-    Splits dataset X and label vector y into client_num clients with at least
-    tolerance samples.
-    """
+    #Splits dataset X and label vector y into client_num clients with at least tolerance samples.
+
     # Total number of samples
     N = X.shape[0]
     np.random.seed(seed)

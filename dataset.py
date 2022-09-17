@@ -1,5 +1,5 @@
-import numpy as np
 import os
+import numpy as np
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from distribute_data import generate_data
@@ -7,10 +7,8 @@ os.environ['PYTHONHASHSEED'] = str(50)
 
 class RTTSplitStrategy():
     def __init__(self, dataset, data_args):
-        """
-        Unpacks necessary arguments for the different data 
-        distribution strategies.
-        """
+        # Unpacks necessary arguments for data split strategies
+
         self.data_seed = data_args['data seed']
         self.distance_clients = data_args['distance clients']
         self.distance_augments = data_args['distance augments']
@@ -32,17 +30,12 @@ class RTTSplitStrategy():
         # Normalizer
         self.scaler = StandardScaler()
 
-        # After distribution among clients
+        # data after distribution among clients
         self.final_data = None
 
     def display_metadata(self):
-        """
-        Displays metadata regarding data distribution
-        - Total Samples
-        - Number of Clients
-        - Training and Test split
-        - Percent of total data per client
-        """
+        # see Test.display_metadata
+
         # Backwards computing total data
         total_x = 0
         total_y = 0
@@ -65,11 +58,8 @@ class RTTSplitStrategy():
         print(f'Total Test Labels: {len(self.y_test)}')
 
     def display_client_distribution(self):
-        """
-        Displays data distribution among clients
-        - Data Distribution as a percent of total client samples
-        - Client Distance Distribution w.r.t. max distance
-        """
+        # see Test.display_client_distribution
+
         total_x = 0
         for x in self.final_data['Client Data']:
             total_x += len(x)
@@ -85,9 +75,8 @@ class RTTSplitStrategy():
             print(f'Client {i + 1}: {x * 100 / max_distance:.2f}%')
 
     def random(self, args):
-        """
-        Randomly sample pairs of GTP and FTM responder pairs from same office venue
-        """
+        # Randomly sample pairs of GTP and FTM responder pairs from same office venue
+
         # Format X and y
         X = self.X.to_numpy()
         y = self.y.to_numpy()
@@ -111,9 +100,8 @@ class RTTSplitStrategy():
         }
 
     def correspondence(self, args):
-        """
-        Distribute samples associated with FTM responder X to client X
-        """       
+        #Distribute samples associated with FTM responder X to client X    
+           
         # Initialize containers
         self.final_data = {'Client Data': [], 'Client Labels': [], 'Client Distances': []}
         X_test = []
@@ -147,9 +135,8 @@ class RTTSplitStrategy():
         }
         
     def spatial(self, args):
-        """
-        Distribute samples based on equal partition of office venue w.r.t. FTM resonders
-        """
+        # Distribute samples based on equal partition of office venue w.r.t. FTM resonders
+
         # r x c grid to split office venue into
         r = args[0]
         c = args[1]
