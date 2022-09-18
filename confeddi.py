@@ -365,6 +365,10 @@ class FederatedSystem:
         Performs ConFeddi for the regressive task.
         Aggregates local model parameters rounds times.
         Selects clients based on context criteria.
+        ----------------
+        `alpha` is the exploration strength (fixed every round). Sometimes denoted as `a`.
+        `reg_coeff` is lambda, the regularization strength for `UCB_scores()`. Sometimes denoted as `l`.
+        `Mt` is a vector of how many clients are chosen each round.
         """
 
         tf.keras.utils.set_random_seed(self.seed)
