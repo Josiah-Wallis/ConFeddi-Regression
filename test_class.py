@@ -40,6 +40,10 @@ class Test():
         self.Mt = Mt
         self.model_seed = model_seed
 
+        # For records
+        self.fedavg_test_mse = None
+        self.fedavg_log = None
+
         # For CV
         self.data_args = data_args
 
@@ -118,6 +122,14 @@ class Test():
 
         self.data_args['data seed'] = seed
 
+    def SetFedAvgBaseline(self, fedavg_test_mse: list[float], fedavg_log: list[float]) -> None:
+        """
+        Stores FedAvg test error and log history for comparisons.
+        """
+
+        self.fedavg_test_mse = fedavg_test_mse
+        self.fedavg_log = fedavg_log
+
     def GetDataset(self) -> pd.DataFrame:
         """
         Returns the original RTT dataset without the complex-valued columns
@@ -141,7 +153,7 @@ class Test():
 
     def load_baseline_fedavg_data(self, mse_path: str, log_path: str) -> None:
         """
-        Loads saved losses and logs of baseline FedAvg model
+        Loads saved losses and logs of baseline FedAvg model from files.
         """
 
         self.fedavg_test_mse = np.load(mse_path)
@@ -574,6 +586,10 @@ class Test():
     def cross_validation(self, K: int, score: int, a: float, l: float, rounds: int = 50, context: list[int] = [0, 1, 2, 3], args: Any = None) -> dict:
         """
         Wrapper cross validation function for scheme cross validations
+        ----------------
+        `score` refers to which score criteria will be used to select best model.
+        `score == 1` refers to average test error.
+        `score == 2` refers to test loss. 
         """
 
         tf.keras.utils.set_random_seed(self.data_args['data seed'])

@@ -16,8 +16,7 @@ class RTTSplitStrategy():
         self.exclude_dtypes = data_args['exclude dtypes']
         self.drop_labels = data_args['drop labels']
         self.target_labels = data_args['target labels']
-        self.test_size1 = data_args['test size 1']
-        self.test_size2 = data_args['test size 2']
+        self.test_size = data_args['test size']
         self.normalize = data_args['normalize']
         self.client_num = data_args['client num']
 
@@ -82,7 +81,7 @@ class RTTSplitStrategy():
         y = self.y.to_numpy()
 
         # Split into model training/val set + global validation set not used for selection criteria
-        X_train, self.X_test, y_train, self.y_test = train_test_split(X, y, test_size = self.test_size1, random_state = self.data_seed)
+        X_train, self.X_test, y_train, self.y_test = train_test_split(X, y, test_size = self.test_size, random_state = self.data_seed)
 
 
         # Distribute among 10 clients (default)
@@ -113,7 +112,7 @@ class RTTSplitStrategy():
             curr_data = self.X[condition].to_numpy()
             curr_labs = self.y[condition].to_numpy()
             
-            x_train, x_test, y_train, y_test = train_test_split(curr_data, curr_labs, test_size = self.test_size1, random_state = self.data_seed)
+            x_train, x_test, y_train, y_test = train_test_split(curr_data, curr_labs, test_size = self.test_size, random_state = self.data_seed)
             self.final_data['Client Data'].append(x_train)
             self.final_data['Client Labels'].append(y_train)
             X_test.append(x_test)
@@ -185,7 +184,7 @@ class RTTSplitStrategy():
                 curr_labs = self.y[condition].to_numpy()
                 
                 # Split data into train/val/test split
-                x_train, x_test, y_train, y_test = train_test_split(curr_data, curr_labs, test_size = self.test_size1, random_state = self.data_seed)
+                x_train, x_test, y_train, y_test = train_test_split(curr_data, curr_labs, test_size = self.test_size, random_state = self.data_seed)
 
                 if self.normalize:
                     x_train = self.scaler.fit_transform(x_train)
