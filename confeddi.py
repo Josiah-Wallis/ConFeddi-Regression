@@ -405,7 +405,6 @@ class FederatedSystem:
 
                 reward_vec.append(history.history['val_loss'][-1])
 
-                # before: round(end - start, 2)
                 time = end - start
                 X[k] = self.GetContext([model, time, history, reward, self.comm_times[k]])
 
@@ -425,7 +424,6 @@ class FederatedSystem:
             xx_sum = np.zeros((d, d))
             rx_sum = np.zeros(d)
 
-            # make sure computations are correct
             for k in S:
                 x1 = X[k].reshape((d, 1))
                 x2 = x1.T
@@ -437,16 +435,14 @@ class FederatedSystem:
             self.V_ucb.append(self.V_ucb[t] + xx_sum)
             self.b_ucb.append(self.b_ucb[t] + rx_sum)
 
-            # marker wasn't here before
             marker = round(default_timer() + channel_time_t, 2)
             self.log.append(marker)
 
             # Compute reward
             curr_loss = np.array(reward_vec).mean()
-            reward = np.absolute(loss - curr_loss) / (round_end - round_start) #didn't round before
+            reward = np.absolute(loss - curr_loss) / (round_end - round_start)
             loss = curr_loss
             
-        # 2nd term wasn't rounded before
         self.log = np.array(self.log) - self.log[0]
             
         return w, b

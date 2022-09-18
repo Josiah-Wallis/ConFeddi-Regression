@@ -34,23 +34,23 @@ from test_class import Test
 def main():
     dataset = pd.read_csv('RTT_data.csv')
     data_args = {
-        'data seed': 3,
-        'distance clients': [0, 2, 3, 6],
-        'distance augments': [0.5, 0.5, 0.5, 0.5],
-        'tolerance': 5,
-        'exclude dtypes': 'object',
-        'drop labels': ['GroundTruthRange[m]'],
-        'target labels': ['GroundTruthRange[m]'],
-        'test size': 0.2,
-        'normalize': True,
-        'client num': 10
+        'data seed': 3,                                 # seed used for all data splitting procedures
+        'distance clients': [0, 2, 3, 6],               # select clients to add distance to for spatial heterogeneity
+        'distance augments': [0.5, 0.5, 0.5, 0.5],      # how much to add to client distances (in kilometers)
+        'tolerance': 5,                                 # minimum number of samples a client can have
+        'exclude dtypes': 'object',                     # type of columns to remove (complex values in RTT dataset case)
+        'drop labels': ['GroundTruthRange[m]'],         # feature(s) to drop for data
+        'target labels': ['GroundTruthRange[m]'],       # feature(s) to predict
+        'test size': 0.2,                               # global test set size
+        'normalize': True,                              # whether to normalize client data locally, and global test set
+        'client num': 10                                # number of clients to distribute data for
     }
     
-    rounds = 50
-    Mt = (np.ones(rounds) * 5).astype('int32')
-    model_seed = 50
-    test = Test(dataset, data_args, Mt, model_seed)
-    test.split(scheme = 1)
+    rounds = 50                                         # number of training rounds
+    Mt = (np.ones(rounds) * 5).astype('int32')          # number of clients to select each round for ConFeddi
+    model_seed = 50                                     # operations seed for tf
+    test = Test(dataset, data_args, Mt, model_seed)     # instantiate test suite
+    test.split(scheme = 1)                              # randomly sample data into 10 (default) clients
     
     w, b, fedavg_loss, fedavg_log = test.run_fedavg_test(rounds = rounds, frac_clients = 0.5)
     
