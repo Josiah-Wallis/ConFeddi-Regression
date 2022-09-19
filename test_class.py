@@ -12,7 +12,7 @@ os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 os.environ['PYTHONHASHSEED'] = str(50)
 
 class Test():
-    def __init__(self, dataset: pd.DataFrame, data_args: dict, Mt: np.array, model_seed: int) -> None:
+    def __init__(self, dataset: pd.DataFrame, data_args: dict, Mt: Union[np.array, int], model_seed: int = 50) -> None:
         """
         Unpack data and arguments to build test suite.
         Runs FedAvg and ConFeddi Tests: 
@@ -27,8 +27,14 @@ class Test():
         - Average error on test set
         """
 
+        # For CV / validate arguments
+        self.data_args = data_args
+
+        # Checks data_args keys and sets missing to default values
+        self.verify_data_args()
+
         # Handler for splitting data
-        self.StrategyHandler = RTTSplitStrategy(dataset, data_args)
+        self.StrategyHandler = RTTSplitStrategy(dataset, self.data_args)
         self.opts = {
             1: self.StrategyHandler.random,
             2: self.StrategyHandler.correspondence,
@@ -44,8 +50,23 @@ class Test():
         self.fedavg_test_mse = None
         self.fedavg_log = None
 
-        # For CV
-        self.data_args = data_args
+    def verify_data_args(self):
+        # Checks if appropriate arguments are in data_args dict, sets missing to default values
+
+        default_args = {
+            'data seed': 11,
+            'client num': 10,
+            'normalize': False,
+            'distance clients': [],
+            'distance augments': 0,
+            'tolerance': 5,
+            'exclude dtypes': None,
+            'test size': 0.2,
+        }
+
+        for key, value in default_args.items():
+            if key not in self.data_args.keys():
+                self.data_args[key] = value
 
     def split(self, scheme: int = 1, args: Iterable[Any] = None) -> None:
         """
@@ -108,7 +129,7 @@ class Test():
 
         self.fed.SetContextElements([0, 1, 2, 3])
 
-    def SetMt(self, Mt: np.array) -> None:
+    def SetMt(self, Mt: Union[np.array, int]) -> None:
         """
         Sets number of clients selected each round.
         """
@@ -151,6 +172,14 @@ class Test():
 
         return self.model_seed
 
+    def format_mt(self, rounds):
+        # if Mt is static, format for FL system
+
+        if type(self.Mt) == int:
+            self.Mt = (np.ones(rounds) * self.Mt).astype('int32')
+
+        return self.Mt
+
     def load_baseline_fedavg_data(self, mse_path: str, log_path: str) -> None:
         """
         Loads saved losses and logs of baseline FedAvg model from files.
@@ -181,7 +210,7 @@ class Test():
         """
 
         self.fed.SetContextElements(context)
-        w, b = self.fed.ConFeddi(alpha, reg_coeff, lr, epochs, rounds, self.Mt, deterministic)
+        w, b = self.fed.ConFeddi(alpha, reg_coeff, lr, epochs, rounds, self.format_mt(rounds), deterministic)
         conf_test_mse = self.fed.test_loss()
         conf_log = self.fed.GetLog()
         self.fed.clear_history()
