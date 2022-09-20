@@ -67,6 +67,11 @@ Calling `test.plot_error()` produces the graph below:
 
 Additionally, the setup for cross validation, similar to the setup used for **First Setup** and **Second Setup** in the summary poster, are provided in scheme1_CV.ipynb (random sampling) and scheme3a_CV.ipynb (grid sampling).
 
+### Relevant Parameters
+Two parameters unique to ConFeddi are `a` or `alpha`, and `l` or `reg_coeff`. 
+- `a` or `alpha` represent **exploration strength**. A lower exploration strength decreases the rate at which the selection algorithm selects clients it hasn't selected before, while a higher exploration strength increases this rate. 
+- `l` or `reg_coeff` acts as a client regularization coefficent, penalizing clients with very large coefficients or high impacts on the global model.
+
 # Contact
 Please send any questions, comments, or inquiries to jwall014@ucr.edu.
 
