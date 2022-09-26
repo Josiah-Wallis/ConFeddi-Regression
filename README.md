@@ -4,7 +4,7 @@
 - Spatial Distribution of clients
 - Noisy Data
 
-Below is a summary of the work I've done, and poster presented at the UCR NC4 Review in Sept. 2022. I retrofitted ConFeddi for a regressive task on the [RTT dataset][dataset].
+Below is a summary of the work I've done, and poster presented at the UCR NC4 Review in Sept. 2022. I refactored ConFeddi for a regressive task on the [RTT dataset][dataset].
 ![summary.png](https://www.dropbox.com/s/bdmpo6azpu9gjdf/summary.png?dl=0&raw=1)
 
 # Implementation
@@ -78,7 +78,7 @@ Please send any questions, comments, or inquiries to jwall014@ucr.edu.
 
 [^1]: Paper is still a work in progress. Contact jwall014@ucr.edu or cxian008@ucr.edu for more info. The arxiv link will be included once it is ready.
 
-[^2]: As this build was designed for the RTT dataset, the `Test()` implementation caters specifically to this dataset and will not work with other datasets. This ConFeddi implementation will be generalized in the future.
+[^2]: As this build was designed for the RTT dataset, the `Test()` implementation caters specifically to this dataset and will not work with other datasets. This test suite implementation will be generalized in the future.
 
 [dataset]: <https://www.researchgate.net/publication/329887019_A_Machine_Learning_Approach_for_Wi-Fi_RTT_Ranging>
 
