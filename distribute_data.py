@@ -15,7 +15,7 @@ def check_tolerance(idxs, N, tolerance):
     else:
         return True
 
-def validate_distribution(split_idxs, N, tolerance, client_num, seed):
+def validate_distribution(split_idxs, N, tolerance, client_num):
     # Wrapper for check_tolerance
 
     count = 0
@@ -35,7 +35,6 @@ def validate_distribution(split_idxs, N, tolerance, client_num, seed):
 
 def split_among_clients(X, y, split_idxs):
     #Distributes X and y amongst clients using the indices from split_idxs.
-
 
     clients_X = []
     clients_y = []
