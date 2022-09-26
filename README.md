@@ -4,7 +4,7 @@
 - Spatial Distribution of clients
 - Noisy Data
 
-Below is a summary of the work I've done, and poster presented at the UCR NC4 Review in Sept. 2022. I retrofitted ConFeddi for a regressive task on the [RTT dataset][dataset].
+Below is a summary of the work I've done, and poster presented at the UCR NC4 Review in Sept. 2022. I refactored ConFeddi for a regressive task on the [RTT dataset][dataset].
 ![summary.png](https://www.dropbox.com/s/bdmpo6azpu9gjdf/summary.png?dl=0&raw=1)
 
 # Implementation
