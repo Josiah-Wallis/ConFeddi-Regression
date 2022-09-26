@@ -7,7 +7,7 @@ from typing import Iterable, Any, Union
 from sklearn.preprocessing import StandardScaler
 from confeddi import FederatedSystem
 from distribute_data import generate_data
-from dataset import RTTSplitStrategy
+from RTTHandler import RTTSplitStrategy
 os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 os.environ['PYTHONHASHSEED'] = str(50)
 
