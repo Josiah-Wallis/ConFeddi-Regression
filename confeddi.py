@@ -40,6 +40,16 @@ def invalid():
     # produces Exception if GetContext accesses invalid context function
 
     raise Exception('Invalid')
+    
+""" Updated Context Elements
+0: Client Update Time + Communication Delay
+1: Normalized Local Training Loss
+2: Normalized Local Validation Loss
+3: Average Local Validation Change Rate (Reward)
+- (v_{t}-v_{t-1}) / (round time)
+- v_{t} = average of final local validation loss for round t
+
+"""
 
 # FL Class
 class FederatedSystem:
